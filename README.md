@@ -7,7 +7,7 @@ This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I coul
 
 
 # Mixed precision mode for reduced memory usage
-if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM ), you will need to use my fork of the taming-transformers branch. Correctness of my changes are not garunteed: 
+if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM ), you will need to use my fork of the taming-transformers branch. The mixed precision mode can be toggled on and off, but I had to add code in the decoder to fix +inf's that caused bad results - mainly i saw these +inf's on my 1070, but not on my 1080, so YMMV. Disclaimer: Correctness of my changes are not garunteed
 
 to setup, when following the steps below, instead of:
 ```sh

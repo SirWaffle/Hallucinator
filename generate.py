@@ -1,5 +1,21 @@
+# my mods from:
+#
+# inital repo:
+# https://github.com/nerdyrodent/VQGAN-CLIP
+#
+# MSE
+# https://www.reddit.com/r/bigsleep/comments/onmz5r/mse_regulized_vqgan_clip/
+# https://colab.research.google.com/drive/1gFn9u3oPOgsNzJWEFmdK-N9h_y65b8fj?usp=sharing#scrollTo=wSfISAhyPmyp
+#
+# MADGRAD
+# https://github.com/facebookresearch/madgrad
+# https://www.kaggle.com/yannnobrega/vqgan-clip-z-quantize-method
+
+
 # Originally made by Katherine Crowson (https://github.com/crowsonkb, https://twitter.com/RiversHaveWings)
 # The original BigGAN+CLIP method was by https://twitter.com/advadnoun
+import gc
+from madgrad import MADGRAD
 
 import argparse
 import math
@@ -19,6 +35,10 @@ from taming.models import cond_transformer, vqgan
 #import taming.modules 
 
 import torch
+from torch.cuda.amp import autocast
+from torch.cuda.amp import custom_fwd
+from torch.cuda.amp import custom_bwd
+from torch.cuda.amp import GradScaler
 from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import transforms
@@ -34,16 +54,39 @@ import kornia.augmentation as K
 import numpy as np
 import imageio
 
+import random
+
 from PIL import ImageFile, Image, PngImagePlugin, ImageChops
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from subprocess import Popen, PIPE
 import re
 
+from torchvision.datasets import CIFAR100
+
 # Supress warnings
 import warnings
 warnings.filterwarnings('ignore')
 
+
+def log_torch_mem():
+    t = torch.cuda.get_device_properties(0).total_memory
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    f = r-a  # free inside reserved
+    print("total mem:       " + str(t))
+    print("reserved mem:    " + str(r))
+    print("allocated mem:   " + str(a))
+    print("free mem:        " + str(f))
+
+
+def seed_torch(seed=42):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
 
 # Check for GPU and reduce the default image size if low VRAM
 default_image_size = 512  # >8GB VRAM
@@ -59,7 +102,9 @@ vq_parser = argparse.ArgumentParser(description='Image generation using VQGAN+CL
 vq_parser.add_argument("-p",    "--prompts", type=str, help="Text prompts", default=None, dest='prompts')
 vq_parser.add_argument("-ip",   "--image_prompts", type=str, help="Image prompts / target image", default=[], dest='image_prompts')
 vq_parser.add_argument("-i",    "--iterations", type=int, help="Number of iterations", default=500, dest='max_iterations')
-vq_parser.add_argument("-se",   "--save_every", type=int, help="Save image iterations", default=50, dest='display_freq')
+vq_parser.add_argument("-se",   "--save_every", type=int, help="Save image iterations", default=50, dest='save_freq')
+vq_parser.add_argument("-sb",   "--save_best", help="Save the best scored image", action='store_true', dest='save_best')
+vq_parser.add_argument("-stats","--stats_every", type=int, help="stats display frequency", default=50, dest='display_freq')
 vq_parser.add_argument("-s",    "--size", nargs=2, type=int, help="Image size (width height) (default: %(default)s)", default=[default_image_size,default_image_size], dest='size')
 vq_parser.add_argument("-ii",   "--init_image", type=str, help="Initial image", default=None, dest='init_image')
 vq_parser.add_argument("-in",   "--init_noise", type=str, help="Initial noise image (pixels or gradient)", default=None, dest='init_noise')
@@ -74,7 +119,7 @@ vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", cho
 vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
 vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
 vq_parser.add_argument("-sd",   "--seed", type=int, help="Seed", default=None, dest='seed')
-vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser", choices=['Adam','AdamW','Adagrad','Adamax','DiffGrad','AdamP','RAdam','RMSprop'], default='Adam', dest='optimiser')
+vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser", choices=['Adam','AdamW','Adagrad','Adamax','DiffGrad','AdamP','RAdam','RMSprop','MADGRAD'], default='Adam', dest='optimiser')
 vq_parser.add_argument("-o",    "--output", type=str, help="Output filename", default="output.png", dest='output')
 vq_parser.add_argument("-vid",  "--video", action='store_true', help="Create video frames?", dest='make_video')
 vq_parser.add_argument("-zvid", "--zoom_video", action='store_true', help="Create zoom video?", dest='make_zoom_video')
@@ -92,15 +137,43 @@ vq_parser.add_argument("-aug",  "--augments", nargs='+', action='append', type=s
 vq_parser.add_argument("-vsd",  "--video_style_dir", type=str, help="Directory with video frames to style", default=None, dest='video_style_dir')
 vq_parser.add_argument("-cd",   "--cuda_device", type=str, help="Cuda device to use", default="cuda:0", dest='cuda_device')
 
+# attempt to use mixed precision mode here
+# need to hunt down causes of the decoder produces inf's/nan's. current hack is to replace them with min/max floats, slower and produces poorer results than 32 bit.
+vq_parser.add_argument("-usemix", "--use_mixed",  action='store_true', help="mixed precision reduces memory size greatly, and gave me 50% more pixels, but seemingly at the cost of numeric instability and not quite as good results. Augmentations do not work in this mode, yet", 
+                        dest='use_mixed_precision')
+
+# this works, can go from 400x400 to 575x400 on an 8GB card being used as a display device
+# time to crunch went up from 1.07 per iter to 7.5s per iteration, cant be used in conjunction with mixed precision mode ( yet )
+vq_parser.add_argument("-clipcpu",   "--clip_cpu",  action='store_true', help="forces the clip model into the cpu. slows things down but frees up memory so you can make larger images on low VRAM cards", 
+                        dest='clip_cpu')
+
+# helpful for tracking down various floating poitn errors 
+vq_parser.add_argument("-ac",   "--anomalyChecker",  action='store_true', help="enabled the pyTorch anomaly checker for nan's, useful in mixed precision mode which has had some issues", 
+                        dest='anomaly_checker')
+
+# simple memory logger
+vq_parser.add_argument("-lm",   "--logMem",  action='store_true', help="log memory usage every checkin", dest='log_mem')
+
+# writes one shot clip and a sort of prompt stat check using clip
+vq_parser.add_argument("-lcp",   "--logClipProbabilities",  action='store_true', dest='log_clip')
+vq_parser.add_argument("-lcos",  "--logClipOneShotGuesses",  action='store_true', dest='log_clip_oneshot')
 
 # Execute the parse_args() method
 args = vq_parser.parse_args()
+
+
+if args.log_clip:
+    print("logging clip probabilities at end, loading vocab stuff")
+    cifar100 = CIFAR100(root="./", download=True, train=False)
+
+print( "Using mixed precision: " + str(args.use_mixed_precision) )  
 
 if not args.prompts and not args.image_prompts:
     args.prompts = "A cute, smiling, Nerdy Rodent"
 
 if args.cudnn_determinism:
    torch.backends.cudnn.deterministic = True
+   torch.backends.cudnn.benchmark = False
 
 if not args.augments:
    args.augments = [['Af', 'Pe', 'Ji', 'Er']]
@@ -192,12 +265,14 @@ def zoom_at(img, x, y, zoom):
 
 # NR: Testing with different intital images
 def random_noise_image(w,h):
-    random_image = Image.fromarray(np.random.randint(0,255,(w,h,3),dtype=np.dtype('uint8')))
+    print('generating random noise image')
+    random_image = Image.fromarray(nn.random.randint(0,255,(w,h,3),dtype=np.dtype('uint8')))
     return random_image
 
 
 # create initial gradient image
 def gradient_2d(start, stop, width, height, is_horizontal):
+    print('generating gradient2d random noise image')
     if is_horizontal:
         return np.tile(np.linspace(start, stop, width), (height, 1))
     else:
@@ -205,6 +280,7 @@ def gradient_2d(start, stop, width, height, is_horizontal):
 
 
 def gradient_3d(width, height, start_list, stop_list, is_horizontal_list):
+    print('generating gradient3d random noise image')
     result = np.zeros((height, width, len(start_list)), dtype=float)
 
     for i, (start, stop, is_horizontal) in enumerate(zip(start_list, stop_list, is_horizontal_list)):
@@ -214,6 +290,7 @@ def gradient_3d(width, height, start_list, stop_list, is_horizontal_list):
 
     
 def random_gradient_image(w,h):
+    print('generating random gradient noise image')
     array = gradient_3d(w, h, (0, 0, np.random.randint(0,255)), (np.random.randint(1,255), np.random.randint(2,255), np.random.randint(3,128)), (True, False, False))
     random_image = Image.fromarray(np.uint8(array))
     return random_image
@@ -244,11 +321,13 @@ def resample(input, size, align_corners=True):
 
 class ReplaceGrad(torch.autograd.Function):
     @staticmethod
+    @custom_fwd
     def forward(ctx, x_forward, x_backward):
         ctx.shape = x_backward.shape
         return x_forward
 
     @staticmethod
+    @custom_bwd
     def backward(ctx, grad_in):
         return None, grad_in.sum_to_size(ctx.shape)
 
@@ -257,6 +336,7 @@ replace_grad = ReplaceGrad.apply
 
 class ClampWithGrad(torch.autograd.Function):
     @staticmethod
+    @custom_fwd
     def forward(ctx, input, min, max):
         ctx.min = min
         ctx.max = max
@@ -264,6 +344,7 @@ class ClampWithGrad(torch.autograd.Function):
         return input.clamp(min, max)
 
     @staticmethod
+    @custom_bwd
     def backward(ctx, grad_in):
         input, = ctx.saved_tensors
         return grad_in * (grad_in * (input - input.clamp(ctx.min, ctx.max)) >= 0), None, None
@@ -285,6 +366,7 @@ class Prompt(nn.Module):
         self.register_buffer('weight', torch.as_tensor(weight))
         self.register_buffer('stop', torch.as_tensor(stop))
 
+    @autocast(enabled=args.use_mixed_precision)
     def forward(self, input):
         input_normed = F.normalize(input.unsqueeze(1), dim=2)
         embed_normed = F.normalize(self.embed.unsqueeze(0), dim=2)
@@ -333,17 +415,22 @@ class MakeCutouts(nn.Module):
             elif item == 'Re':
                 augment_list.append(K.RandomResizedCrop(size=(self.cut_size,self.cut_size), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5))
                 
+        if args.use_mixed_precision==True:
+            print("cant use augments in mixed precision mode yet...")
+            augment_list = []
+
         self.augs = nn.Sequential(*augment_list)
         self.noise_fac = 0.1
         # self.noise_fac = False
 
         # Uncomment if you like seeing the list ;)
-        # print(augment_list)
+        print(augment_list)
         
         # Pooling
         self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
         self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
 
+    @autocast(enabled=args.use_mixed_precision)
     def forward(self, input):
         cutouts = []
         
@@ -379,6 +466,7 @@ class MakeCutoutsPoolingUpdate(nn.Module):
         self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
         self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
 
+    @autocast(enabled=args.use_mixed_precision)
     def forward(self, input):
         sideY, sideX = input.shape[2:4]
         max_size = min(sideX, sideY)
@@ -434,7 +522,7 @@ class MakeCutoutsNRUpdate(nn.Module):
                 
         self.augs = nn.Sequential(*augment_list)
 
-
+    @autocast(enabled=args.use_mixed_precision)
     def forward(self, input):
         sideY, sideX = input.shape[2:4]
         max_size = min(sideX, sideY)
@@ -469,7 +557,7 @@ class MakeCutoutsUpdate(nn.Module):
             K.RandomPerspective(0.2,p=0.4),)
         self.noise_fac = 0.1
 
-
+    @autocast(enabled=args.use_mixed_precision)
     def forward(self, input):
         sideY, sideX = input.shape[2:4]
         max_size = min(sideX, sideY)
@@ -496,6 +584,7 @@ class MakeCutoutsOrig(nn.Module):
         self.cutn = cutn
         self.cut_pow = cut_pow
 
+    @autocast(enabled=args.use_mixed_precision)
     def forward(self, input):
         sideY, sideX = input.shape[2:4]
         max_size = min(sideX, sideY)
@@ -533,7 +622,14 @@ def load_vqgan_model(config_path, checkpoint_path):
     del model.loss
     return model
 
-
+# Vector quantize
+def synth(z):
+    if gumbel:
+        z_q = vector_quantize(z.movedim(1, 3), vqganModel.quantize.embed.weight).movedim(3, 1)
+    else:
+        z_q = vector_quantize(z.movedim(1, 3), vqganModel.quantize.embedding.weight).movedim(3, 1)
+    return clamp_with_grad(vqganModel.decode(z_q).add(1).div(2), 0, 1)
+    
 def resize_image(image, out_size):
     ratio = image.size[0] / image.size[1]
     area = min(image.size[0] * image.size[1], out_size[0] * out_size[1])
@@ -542,17 +638,49 @@ def resize_image(image, out_size):
 
 
 # Do it
-device = torch.device(args.cuda_device)
-model = load_vqgan_model(args.vqgan_config, args.vqgan_checkpoint).to(device)
+vqganDevice = torch.device(args.cuda_device)
+vqganModel = load_vqgan_model(args.vqgan_config, args.vqgan_checkpoint).to(vqganDevice)
+
+print("---  VQGAN model loaded ---")
+log_torch_mem()
+print("--- / VQGAN model loaded ---")
+
+
 jit = True if float(torch.__version__[:3]) < 1.8 else False
-perceptor = clip.load(args.clip_model, jit=jit)[0].eval().requires_grad_(False).to(device)
+
+
+if args.clip_cpu == False:
+    clipDevice = vqganDevice
+    clipPerceptor = clip.load(args.clip_model, jit=jit)[0].eval().requires_grad_(False).to(clipDevice)       
+else:
+    clipDevice = torch.device("cpu")
+    clipPerceptor = clip.load(args.clip_model, "cpu", jit=jit)[0].eval().requires_grad_(False).to(clipDevice) 
+
+
+
+print("---  CLIP model loaded to " + str(clipDevice) +" ---")
+log_torch_mem()
+print("--- / CLIP model loaded ---")
+
+if args.anomaly_checker:
+    torch.autograd.set_detect_anomaly(True)
+
+
+if args.seed is None:
+    seed = torch.seed()
+else:
+    seed = args.seed  
+
+print('Using seed:', seed)
+seed_torch(seed)
+
 
 # clock=deepcopy(perceptor.visual.positional_embedding.data)
 # perceptor.visual.positional_embedding.data = clock/clock.max()
 # perceptor.visual.positional_embedding.data=clamp_with_grad(clock,0,1)
 
-cut_size = perceptor.visual.input_resolution
-f = 2**(model.decoder.num_resolutions - 1)
+cut_size = clipPerceptor.visual.input_resolution
+f = 2**(vqganModel.decoder.num_resolutions - 1)
 
 # Cutout class options:
 # 'latest','original','updated' or 'updatedpooling'
@@ -573,49 +701,57 @@ sideX, sideY = toksX * f, toksY * f
 # Gumbel or not?
 if gumbel:
     e_dim = 256
-    n_toks = model.quantize.n_embed
-    z_min = model.quantize.embed.weight.min(dim=0).values[None, :, None, None]
-    z_max = model.quantize.embed.weight.max(dim=0).values[None, :, None, None]
+    n_toks = vqganModel.quantize.n_embed
+    z_min = vqganModel.quantize.embed.weight.min(dim=0).values[None, :, None, None]
+    z_max = vqganModel.quantize.embed.weight.max(dim=0).values[None, :, None, None]
 else:
-    e_dim = model.quantize.e_dim
-    n_toks = model.quantize.n_e
-    z_min = model.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
-    z_max = model.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
+    e_dim = vqganModel.quantize.e_dim
+    n_toks = vqganModel.quantize.n_e
+    z_min = vqganModel.quantize.embedding.weight.min(dim=0).values[None, :, None, None]
+    z_max = vqganModel.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
 
 
 if args.init_image:
     if 'http' in args.init_image:
-      img = Image.open(urlopen(args.init_image))
+        img = Image.open(urlopen(args.init_image))
     else:
-      img = Image.open(args.init_image)
-    pil_image = img.convert('RGB')
-    pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
-    pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
+        img = Image.open(args.init_image)
+        pil_image = img.convert('RGB')
+        pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
+        pil_tensor = TF.to_tensor(pil_image)
+        z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 elif args.init_noise == 'pixels':
     img = random_noise_image(args.size[0], args.size[1])    
     pil_image = img.convert('RGB')
     pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
     pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
+    z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 elif args.init_noise == 'gradient':
     img = random_gradient_image(args.size[0], args.size[1])
     pil_image = img.convert('RGB')
     pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
     pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
+    z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 else:
-    one_hot = F.one_hot(torch.randint(n_toks, [toksY * toksX], device=device), n_toks).float()
-    # z = one_hot @ model.quantize.embedding.weight
+    one_hot = F.one_hot(torch.randint(n_toks, [toksY * toksX], device=vqganDevice), n_toks).float()
+    # z = one_hot @ vqganModel.quantize.embedding.weight
     if gumbel:
-        z = one_hot @ model.quantize.embed.weight
+        z = one_hot @ vqganModel.quantize.embed.weight
     else:
-        z = one_hot @ model.quantize.embedding.weight
+        z = one_hot @ vqganModel.quantize.embedding.weight
 
     z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
     #z = torch.rand_like(z)*2						# NR: check
 
+# attempt to write out the input noise...
+out = synth(z)
+info = PngImagePlugin.PngInfo()
+info.add_text('comment', f'{args.prompts}')
+TF.to_pil_image(out[0].cpu()).save( str(0).zfill(5) + '_seed_' + args.output, pnginfo=info)
+
+ 
 z_orig = z.clone()
+
 z.requires_grad_(True)
 
 pMs = []
@@ -630,22 +766,22 @@ normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
 if args.prompts:
     for prompt in args.prompts:
         txt, weight, stop = split_prompt(prompt)
-        embed = perceptor.encode_text(clip.tokenize(txt).to(device)).float()
-        pMs.append(Prompt(embed, weight, stop).to(device))
+        embed = clipPerceptor.encode_text(clip.tokenize(txt).to(clipDevice)).float()
+        pMs.append(Prompt(embed, weight, stop).to(clipDevice))
 
 for prompt in args.image_prompts:
     path, weight, stop = split_prompt(prompt)
     img = Image.open(path)
     pil_image = img.convert('RGB')
     img = resize_image(pil_image, (sideX, sideY))
-    batch = make_cutouts(TF.to_tensor(img).unsqueeze(0).to(device))
-    embed = perceptor.encode_image(normalize(batch)).float()
-    pMs.append(Prompt(embed, weight, stop).to(device))
+    batch = make_cutouts(TF.to_tensor(img).unsqueeze(0).to(clipDevice))
+    embed = clipPerceptor.encode_image(normalize(batch)).float()
+    pMs.append(Prompt(embed, weight, stop).to(clipDevice))
 
 for seed, weight in zip(args.noise_prompt_seeds, args.noise_prompt_weights):
     gen = torch.Generator().manual_seed(seed)
-    embed = torch.empty([1, perceptor.visual.output_dim]).normal_(generator=gen)
-    pMs.append(Prompt(embed, weight).to(device))
+    embed = torch.empty([1, clipPerceptor.visual.output_dim]).normal_(generator=gen)
+    pMs.append(Prompt(embed, weight).to(clipDevice))
 
 
 # Set the optimiser
@@ -666,6 +802,8 @@ def get_opt(opt_name, opt_lr):
         opt = RAdam([z], lr=opt_lr)		    
     elif opt_name == "RMSprop":
         opt = optim.RMSprop([z], lr=opt_lr)
+    elif opt_name == "MADGRAD":
+        opt = MADGRAD([z], lr=args.step_size)             
     else:
         print("Unknown optimiser. Are choices broken?")
         opt = optim.Adam([z], lr=opt_lr)
@@ -673,9 +811,12 @@ def get_opt(opt_name, opt_lr):
 
 opt = get_opt(args.optimiser, args.step_size)
 
+if args.optimiser == "MADGRAD":
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', factor=0.999, patience=0)  
 
 # Output for the user
-print('Using device:', device)
+print('Using vqgandevice:', vqganDevice)
+print('Using clipdevice:', clipDevice)
 print('Optimising using:', args.optimiser)
 
 if args.prompts:
@@ -687,74 +828,193 @@ if args.init_image:
 if args.noise_prompt_weights:
     print('Noise prompt weights:', args.noise_prompt_weights)    
 
+def WriteLogClipResults(imgout):
+    #image, class_id = cifar100[3637]
 
-if args.seed is None:
-    seed = torch.seed()
-else:
-    seed = args.seed  
-torch.manual_seed(seed)
-print('Using seed:', seed)
+    #out = synth(z) 
+    img = normalize(make_cutouts(imgout))
+
+    if args.log_clip_oneshot:
+        #one shot identification
+        with torch.no_grad():        
+            image_features = clipPerceptor.encode_image(img).float()
+
+        text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
+        
+        with torch.no_grad():
+            text_features = clipPerceptor.encode_text(text_inputs).float()
+            text_features /= text_features.norm(dim=-1, keepdim=True)
+
+        # Pick the top 5 most similar labels for the image
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+        similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+        values, indices = similarity[0].topk(5)
+
+        # Print the result
+        print("\nOne-shot predictions:\n")
+        for value, index in zip(values, indices):
+            print(f"{cifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
+
+    if args.log_clip:
+        # prompt matching percentages
+        textins = []
+        promptPartStrs = []
+        if args.prompts:
+            for prompt in args.prompts:
+                txt, weight, stop = split_prompt(prompt)  
+                splitTxt = txt.split()
+                for stxt in splitTxt:   
+                    promptPartStrs.append(stxt)       
+                    textins.append(clip.tokenize(stxt))
+                for i in range(len(splitTxt) - 1):
+                    promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1])       
+                    textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1]))
+                for i in range(len(splitTxt) - 2):
+                    promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2])       
+                    textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2]))                    
+
+        #text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
+        text_inputs = torch.cat(textins).to(clipDevice)
+        
+        with torch.no_grad():
+            image_features = clipPerceptor.encode_image(img).float()
+            text_features = clipPerceptor.encode_text(text_inputs).float()
+            text_features /= text_features.norm(dim=-1, keepdim=True)
+
+        # Pick the top 5 most similar labels for the image
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+        similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+        
+        top = 5
+        if top > similarity[0].size()[0]:
+            top = similarity[0].size()[0]
+
+        values, indices = similarity[0].topk(top)
+
+        # Print the result
+        print("\nPrompt matching predictions:\n")
+        for value, index in zip(values, indices):        
+            print(f"{promptPartStrs[index]:>16s}: {100 * value.item():.2f}%")    
 
 
-# Vector quantize
-def synth(z):
-    if gumbel:
-        z_q = vector_quantize(z.movedim(1, 3), model.quantize.embed.weight).movedim(3, 1)
-    else:
-        z_q = vector_quantize(z.movedim(1, 3), model.quantize.embedding.weight).movedim(3, 1)
-    return clamp_with_grad(model.decode(z_q).add(1).div(2), 0, 1)
-
-
-#@torch.no_grad()
 @torch.inference_mode()
-def checkin(i, losses):
-    losses_str = ', '.join(f'{loss.item():g}' for loss in losses)
-    tqdm.write(f'i: {i}, loss: {sum(losses).item():g}, losses: {losses_str}')
-    out = synth(z)
+def checkin(i, losses, out):
+    #losses_str = ', '.join(f'{loss.item():g}' for loss in losses)
+    #tqdm.write(f'i: {i}, loss: {sum(losses).item():g}, losses: {losses_str}')
+
+    print("\n*************************************************")
+    print(f'i: {i}, loss sum: {sum(losses).item():g}')
+    print("*************************************************")
+
+    promptNum = 0
+    for loss in losses:
+        print( "----> " + args.prompts[promptNum] + " - loss: " + str(loss.item()) )
+        promptNum += 1
+
+    print(" ")
+
+    if args.log_clip:
+        WriteLogClipResults(out)
+        print(" ")
+
     info = PngImagePlugin.PngInfo()
     info.add_text('comment', f'{args.prompts}')
-    TF.to_pil_image(out[0].cpu()).save(args.output, pnginfo=info) 	
+    TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + args.output, pnginfo=info)
+    
+    if args.log_mem:
+        log_torch_mem()
+        print(" ")
+
+    print(" ")
+
+    #torch.cuda.empty_cache()
+    #gc.collect()
 
 
-def ascend_txt():
+def ascend_txt(out):
+
     global i
-    out = synth(z)
-    iii = perceptor.encode_image(normalize(make_cutouts(out))).float()
-    
-    result = []
+    with torch.cuda.amp.autocast(args.use_mixed_precision):
 
-    if args.init_weight:
-        # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
-        result.append(F.mse_loss(z, torch.zeros_like(z_orig)) * ((1/torch.tensor(i*2 + 1))*args.init_weight) / 2)
+        if clipDevice != vqganDevice:
+            iii = clipPerceptor.encode_image(normalize(make_cutouts(out).to(clipDevice))).float()
+        else:
+            iii = clipPerceptor.encode_image(normalize(make_cutouts(out))).float()
 
-    for prompt in pMs:
-        result.append(prompt(iii))
-    
-    if args.make_video:    
-        img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
-        img = np.transpose(img, (1, 2, 0))
-        imageio.imwrite('./steps/' + str(i) + '.png', np.array(img))
+        
+        result = []
 
-    return result # return loss
+        if args.init_weight:
+            # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
+            result.append(F.mse_loss(z, torch.zeros_like(z_orig)) * ((1/torch.tensor(i*2 + 1))*args.init_weight) / 2)
 
+        for prompt in pMs:
+            result.append(prompt(iii))
+        
+        if args.make_video:    
+            img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
+            img = np.transpose(img, (1, 2, 0))
+            imageio.imwrite('./steps/' + str(i) + '.png', np.array(img))
+
+        return result # return loss
+
+
+bestErrorScore = 99999
 
 def train(i):
-    opt.zero_grad(set_to_none=True)
-    lossAll = ascend_txt()
-    
-    if i % args.display_freq == 0:
-        checkin(i, lossAll)
-       
-    loss = sum(lossAll)
-    loss.backward()
-    opt.step()
-    
-    #with torch.no_grad():
-    with torch.inference_mode():
-        z.copy_(z.maximum(z_min).minimum(z_max))
+    global loss_idx
+    global bestErrorScore
+
+    with torch.cuda.amp.autocast(args.use_mixed_precision):
+        opt.zero_grad(set_to_none=True)
+        
+        out = synth(z) 
+        
+        lossAll = ascend_txt(out)
+        
+        if i % args.display_freq == 0:
+            checkin(i, lossAll, out)  
+
+        if i % args.save_freq == 0:          
+            info = PngImagePlugin.PngInfo()
+            info.add_text('comment', f'{args.prompts}')
+            TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + args.output, pnginfo=info)
+            
+        loss = sum(lossAll)
+        lossAvg = loss / len(lossAll)
+
+        if args.save_best == True and bestErrorScore > lossAvg.item():
+            print("saving image for best error: " + str(lossAvg.item()))
+            bestErrorScore = lossAvg
+            info = PngImagePlugin.PngInfo()
+            info.add_text('comment', f'{args.prompts}')
+            TF.to_pil_image(out[0].cpu()).save( "lowest_error_" + args.output, pnginfo=info)
+
+        if args.optimiser == "MADGRAD":
+            loss_idx.append(loss.item())
+            if i > 100: #use only 100 last looses to avg
+                avg_loss = sum(loss_idx[i-100:])/len(loss_idx[i-100:]) 
+            else:
+                avg_loss = sum(loss_idx)/len(loss_idx)
+
+            scheduler.step(avg_loss)
+        
+        if args.use_mixed_precision == False:
+            loss.backward()
+            opt.step()
+        else:
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+        
+        #with torch.no_grad():
+        with torch.inference_mode():
+            z.copy_(z.maximum(z_min).minimum(z_max))
 
 
-
+loss_idx = []
 i = 0 # Iteration counter
 j = 0 # Zoom video frame counter
 p = 1 # Phrase counter
@@ -764,6 +1024,9 @@ this_video_frame = 0 # for video styling
 # Messing with learning rate / optimisers
 #variable_lr = args.step_size
 #optimiser_list = [['Adam',0.075],['AdamW',0.125],['Adagrad',0.2],['Adamax',0.125],['DiffGrad',0.075],['RAdam',0.125],['RMSprop',0.02]]
+
+# Creates a GradScaler once at the beginning of training.
+scaler = GradScaler()
 
 # Do it
 try:
@@ -802,7 +1065,7 @@ try:
                         pil_tensor = TF.to_tensor(pil_image_zoom)
                         
                         # Re-encode
-                        z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
+                        z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
                         z_orig = z.clone()
                         z.requires_grad_(True)
 
@@ -827,8 +1090,9 @@ try:
                     
                     for prompt in args.prompts:
                         txt, weight, stop = split_prompt(prompt)
-                        embed = perceptor.encode_text(clip.tokenize(txt).to(device)).float()
-                        pMs.append(Prompt(embed, weight, stop).to(device))
+                        embed = clipPerceptor.encode_text(clip.tokenize(txt).to(clipDevice)).float()
+                        pMs.append(Prompt(embed, weight, stop).to(clipDevice))
+
                                         
                     '''
                     # Smooth test
@@ -860,9 +1124,29 @@ try:
 
             # Training time
             train(i)
+
+            if i == args.max_iterations:
+                out = synth(z)
+                    
+                # Save image
+                img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
+                img = np.transpose(img, (1, 2, 0))
+                imageio.imwrite(args.output, np.array(img))                
+            
             
             # Ready to stop yet?
             if i == args.max_iterations:
+                if args.log_clip:    
+                	# write one for the console
+                	WriteLogClipResults(out)
+                	
+                	#write once to a file for easy grabbing outside of this script                
+                    text_file = open(args.output + ".txt", "w")
+                    sys.stdout = text_file
+                    WriteLogClipResults(out)
+                    sys.stdout = sys.stdout 
+                    text_file.close()
+
                 if not args.video_style_dir:
                     # we're done
                     break

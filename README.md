@@ -30,7 +30,10 @@ if you want to use / mess with running in mixed precision mode ( greatly reduces
 ## additional dependencies
 ```sh
 pip install madgrad
+pip install torch-optimizer==0.1.0
 ```
+
+torch-optimizer updated and removed some optimisers, as well as added madgrad.... so updates need to be made to support this.
 
 ## quick summary of changes
 - added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least

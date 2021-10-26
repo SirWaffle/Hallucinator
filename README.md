@@ -48,13 +48,13 @@ if you want to use / mess with running in mixed precision mode ( greatly reduces
 
 - changed files to be written sequentially instead of overtop the same file
 
-- added cmd to enable mixed precision mode ( requires my modifications to taming transformers or you get a black screen nad an inf/nan party )
+- added cmd to enable mixed precision mode ( requires my modifications to taming transformers or you get a black screen nad an inf/nan party ). Augmentations do not currently work in this, due to float/half type mismatches in the vision library that need to be resolved
 
 - added cmd for debugging purposes, that enabled anomoly checking to assert when infs/nans etc. occur during training
 
 ## trouble shooting
 
-- if, like me, you also run on windows, be mindful of the single quotes ( ' ) in the command line stuff, they may need to be changed to " depending on environment adn what not
+- if, like me, you also run on windows, be mindful of the single quotes ( ' ) in the command line stuff, they may need to be changed to " depending on environment and what not
 
 # =============    Original Repo Instructions ===============
 

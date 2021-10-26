@@ -1,6 +1,6 @@
 # VQGAN-CLIP ( forked from nerdyrodent )
 
-This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. At some point I will update this with what was modified, until then, the following text was forked from the original repo.
+This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. 
 
 
 # Changes to setup instructions:

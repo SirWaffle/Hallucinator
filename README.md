@@ -34,6 +34,7 @@ pip install torch-optimizer==0.1.0
 ```
 
 torch-optimizer updated and removed some optimisers, as well as added madgrad.... so updates need to be made to support this.
+if you get errors about missing optimizer imports, you may need to check the version of the torch-optimizer, and downgrade to 0.1.0 for now
 
 ## quick summary of changes
 - added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least

@@ -50,7 +50,7 @@ so far, the results have been pretty poor, which likely means something was done
 
 ## trouble shooting
 
-- if, like me, you also rubn on windows, be mindful of the single quotes ( ' ) in the command line stuff, they may need to be changed to " depending on environment adn what not
+- if, like me, you also run on windows, be mindful of the single quotes ( ' ) in the command line stuff, they may need to be changed to " depending on environment adn what not
 
 # =============    Original Repo Instructions ===============
 

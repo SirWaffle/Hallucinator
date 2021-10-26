@@ -32,9 +32,6 @@ if you want to use / mess with running in mixed precision mode ( greatly reduces
 pip install madgrad
 ```
 
-## pyTorch installation
-- i used <https://pytorch.org/get-started/locally/> to select the pytorch packages to install
-
 ## quick summary of changes
 - added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least
 

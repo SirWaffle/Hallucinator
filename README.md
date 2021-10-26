@@ -3,13 +3,53 @@
 This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. At some point I will update this with what was modified, until then, the following text was forked from the original repo.
 
 
+## Changes to setup instructions:
 
 
+# Mixed precision mode for reduced memory usage
+if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM ), you will need to use my fork of the taming-transformers branch. The mixed precision mode can be toggled on and off, but I had to add code in the decoder to fix +inf's that caused bad results - mainly i saw these +inf's on my 1070, but not on my 1080, so YMMV. Disclaimer: Correctness of my changes are not garunteed
+
+to setup, when following the steps below, when initially cloning the repos, instead of:
+```sh
+git clone 'https://github.com/nerdyrodent/VQGAN-CLIP'
+cd VQGAN-CLIP
+git clone 'https://github.com/openai/CLIP'
+git clone 'https://github.com/CompVis/taming-transformers'
+```
+use:
+```sh
+git clone https://github.com/SirWaffle/VQGAN-CLIP
+cd VQGAN-CLIP
+git clone https://github.com/SirWaffle/taming-transformers
+git clone https://github.com/openai/CLIP
+```
+
+so far, the results have been pretty poor, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
 
 
+## quick summary of changes
+- added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least
+
+- fixed some issues with determinism in the runs, now with a seed + the deterministic flag, outcome is deterministic
+
+- added MADGRAD optimizer
+
+- reduced memory in some locations / slight perf increases
+
+- added cmd to add some fun CLIP output, which might not be correct. dumps probabilities of prompts and one shots to console and a file at the end of the run / during stat updates
+
+- added a separate way to log stats to console that doesnt also write files ( for performance reasons )
+
+- added new cmd param to control how often the image files are written
+
+- changed files to be written sequentially instead of overtop the same file
+
+- added cmd to enable mixed precision mode ( requires my modifications to taming transformers or you get a black screen
+
+- added cmd for debugging purposes, that enabled anomoly checking to assert when infs/nans etc. occur during training
 
 
-=============    Original Repo Instructions ===============
+## =============    Original Repo Instructions ===============
 
 A repo for running VQGAN+CLIP locally. This started out as a Katherine Crowson VQGAN+CLIP derived Google colab notebook.
 

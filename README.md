@@ -3,13 +3,23 @@
 This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. At some point I will update this with what was modified, until then, the following text was forked from the original repo.
 
 
+## Changes to setup instructions:
+
+if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM ), you will need to use my fork of the taming-transformers branch. Correctness of my changes are not garunteed: 
+
+to setup, instead of:
+```sh
+git clone 'https://github.com/CompVis/taming-transformers'
+```
+use:
+```sh
+git clone 'https://github.com/SirWaffle/taming-transformers'
+```
 
 
 
 
-
-
-=============    Original Repo Instructions ===============
+## =============    Original Repo Instructions ===============
 
 A repo for running VQGAN+CLIP locally. This started out as a Katherine Crowson VQGAN+CLIP derived Google colab notebook.
 

@@ -3,11 +3,10 @@
 This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. At some point I will update this with what was modified, until then, the following text was forked from the original repo.
 
 
-## Changes to setup instructions:
+# Changes to setup instructions:
 
 
-# Mixed precision mode for reduced memory usage
-if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM ), you will need to use my fork of the taming-transformers branch. The mixed precision mode can be toggled on and off, but I had to add code in the decoder to fix +inf's that caused bad results - mainly i saw these +inf's on my 1070, but not on my 1080, so YMMV. Disclaimer: Correctness of my changes are not garunteed
+## GIT repo cloning steps
 
 to setup, when following the steps below, when initially cloning the repos, instead of:
 ```sh
@@ -23,9 +22,14 @@ cd VQGAN-CLIP
 git clone https://github.com/SirWaffle/taming-transformers
 git clone https://github.com/openai/CLIP
 ```
+note: if you dont care about trying mixed precision mode, you dont need to use my fork of taming-transformers
 
-so far, the results have been pretty poor, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
+about mixed precision mode:
+if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM - i can do 550x500 instead of 400x400 in an 8GB cardormers branch. The mixed precision mode can be toggled on and off, but I had to add code in the decoder to fix +inf's that caused bad results - mainly i saw these +inf's on my 1070, but not on my 1080, so YMMV. Disclaimer: Correctness of my changes are not garunteed. Soar, the results have been pretty poor, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
 
+
+# pyTorch isntallation
+- i used <https://pytorch.org/get-started/locally/> to select the pytorch packages to install
 
 ## quick summary of changes
 - added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least
@@ -44,7 +48,7 @@ so far, the results have been pretty poor, which likely means something was done
 
 - changed files to be written sequentially instead of overtop the same file
 
-- added cmd to enable mixed precision mode ( requires my modifications to taming transformers or you get a black screen
+- added cmd to enable mixed precision mode ( requires my modifications to taming transformers or you get a black screen nad an inf/nan party )
 
 - added cmd for debugging purposes, that enabled anomoly checking to assert when infs/nans etc. occur during training
 

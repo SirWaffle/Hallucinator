@@ -11,11 +11,11 @@ if you want to use / mess with running in mixed precision mode ( greatly reduces
 
 to setup, instead of:
 ```sh
-git clone 'https://github.com/CompVis/taming-transformers'
+git clone https://github.com/CompVis/taming-transformers
 ```
 use:
 ```sh
-git clone 'https://github.com/SirWaffle/taming-transformers'
+git clone https://github.com/SirWaffle/taming-transformers
 ```
 
 so far, the results have been pretty poor, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.

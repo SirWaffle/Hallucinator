@@ -1,6 +1,15 @@
 # VQGAN-CLIP Overview
 
-This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP> , see that repo for more information. Stuff I've modified for my own purposes are listed below
+This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. At some point I will update this with what was modified, until then, the following text was forked from the original repo.
+
+
+
+
+
+
+
+
+=============    Original Repo Instructions ===============
 
 A repo for running VQGAN+CLIP locally. This started out as a Katherine Crowson VQGAN+CLIP derived Google colab notebook.
 

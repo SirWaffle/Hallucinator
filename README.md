@@ -5,6 +5,8 @@ This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I coul
 
 ## Changes to setup instructions:
 
+
+# Mixed precision mode for reduced memory usage
 if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM ), you will need to use my fork of the taming-transformers branch. Correctness of my changes are not garunteed: 
 
 to setup, instead of:
@@ -15,6 +17,8 @@ use:
 ```sh
 git clone 'https://github.com/SirWaffle/taming-transformers'
 ```
+
+so far, the results have been pretty poor, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
 
 
 

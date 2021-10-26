@@ -48,8 +48,11 @@ so far, the results have been pretty poor, which likely means something was done
 
 - added cmd for debugging purposes, that enabled anomoly checking to assert when infs/nans etc. occur during training
 
+## trouble shooting
 
-## =============    Original Repo Instructions ===============
+- if, like me, you also rubn on windows, be mindful of the single quotes ( ' ) in the command line stuff, they may need to be changed to " depending on environment adn what not
+
+# =============    Original Repo Instructions ===============
 
 A repo for running VQGAN+CLIP locally. This started out as a Katherine Crowson VQGAN+CLIP derived Google colab notebook.
 

@@ -27,8 +27,7 @@ note: if you dont care about trying mixed precision mode, you dont need to use m
 about mixed precision mode:
 if you want to use / mess with running in mixed precision mode ( greatly reduces memory and allows for larger images in less VRAM - i can do 550x500 instead of 400x400 in an 8GB cardormers branch. The mixed precision mode can be toggled on and off, but I had to add code in the decoder to fix +inf's that caused bad results - mainly i saw these +inf's on my 1070, but not on my 1080, so YMMV. Disclaimer: Correctness of my changes are not garunteed. Soar, the results have been pretty poor, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
 
-
-as an additional dependency, isntall:
+# additional dependencies
 ```sh
 pip install madgrad
 ```

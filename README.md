@@ -21,6 +21,26 @@ git clone https://github.com/SirWaffle/taming-transformers
 so far, the results have been pretty poor, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
 
 
+## quick summary of changes
+- added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least
+
+- fixed some issues with determinism in the runs, now with a seed + the deterministic flag, outcome is deterministic
+
+- added MADGRAD optimizer
+
+- reduced memory in some locations / slight perf increases
+
+- added cmd to add some fun CLIP output, which might not be correct. dumps probabilities of prompts and one shots to console and a file at the end of the run / during stat updates
+
+- added a separate way to log stats to console that doesnt also write files ( for performance reasons )
+
+- added new cmd param to control how often the image files are written
+
+- changed files to be written sequentially instead of overtop the same file
+
+- added cmd to enable mixed precision mode ( requires my modifications to taming transformers or you get a black screen
+
+- added cmd for debugging purposes, that enabled anomoly checking to assert when infs/nans etc. occur during training
 
 
 ## =============    Original Repo Instructions ===============

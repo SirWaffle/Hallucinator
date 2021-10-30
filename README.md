@@ -27,14 +27,6 @@ note: if you dont care about trying mixed precision mode, you dont need to use m
 about mixed precision mode:
 if you want to use / mess with running in mixed precision mode, which greatly reduces memory and allows for larger images in less VRAM - i can do 550x500 instead of 400x400 in an 8GB card. The mixed precision mode can be toggled on and off, but I had to add code in the decoder to fix +inf's that caused bad results - mainly i saw these +inf's on my 1070, but not on my 1080, so YMMV. Disclaimer: Correctness of my changes are not garunteed. So far, the results have been pretty poor when using mixed precision, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
 
-## additional dependencies
-```sh
-pip install madgrad
-pip install torch-optimizer==0.1.0
-```
-
-torch-optimizer updated and removed some optimisers, as well as added madgrad.... so updates need to be made to support this.
-if you get errors about missing optimizer imports, you may need to check the version of the torch-optimizer, and downgrade to 0.1.0 for now
 
 ## quick summary of changes
 - added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least
@@ -57,11 +49,13 @@ if you get errors about missing optimizer imports, you may need to check the ver
 
 - added cmd for debugging purposes, that enabled anomoly checking to assert when infs/nans etc. occur during training
 
+- beggining to seperate the giant file into seveal mor elogical chunks to prepare for additional features
+
 ## trouble shooting
 
 - if, like me, you also run on windows, be mindful of the single quotes ( ' ) in the command line stuff, they may need to be changed to " depending on environment and what not
 
-# =============    Original Repo Instructions ===============
+# ==== Original Repo Instructions ======
 
 A repo for running VQGAN+CLIP locally. This started out as a Katherine Crowson VQGAN+CLIP derived Google colab notebook.
 

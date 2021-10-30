@@ -8,7 +8,6 @@
 # https://colab.research.google.com/drive/1gFn9u3oPOgsNzJWEFmdK-N9h_y65b8fj?usp=sharing#scrollTo=wSfISAhyPmyp
 #
 # MADGRAD
-# https://github.com/facebookresearch/madgrad
 # https://www.kaggle.com/yannnobrega/vqgan-clip-z-quantize-method
 
 
@@ -25,10 +24,6 @@ cmdLineArgs.init()
 
 
 import makeCutouts
-
-
-# back to original list of imports
-from madgrad import MADGRAD
 
 import random
 # from email.policy import default
@@ -58,10 +53,9 @@ from torch.cuda import get_device_properties
 torch.backends.cudnn.benchmark = False		# NR: True is a bit faster, but can lead to OOM. False is more deterministic.
 #torch.use_deterministic_algorithms(True)	# NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation
 
-from torch_optimizer import DiffGrad, AdamP
+import torch_optimizer
 
 from CLIP import clip
-import kornia.augmentation as K
 import numpy as np
 import imageio
 
@@ -175,7 +169,7 @@ if cmdLineArgs.args.video_style_dir:
         os.mkdir('steps')
 
     cmdLineArgs.args.init_image = video_frame_list[0]
-    filename = os.path.basename(args.init_image)
+    filename = os.path.basename(cmdLineArgs.args.init_image)
     cwd = os.getcwd()
     cmdLineArgs.args.output = os.path.join(cwd, "steps", filename)
     num_video_frames = len(video_frame_list) # for video styling
@@ -482,13 +476,13 @@ def get_opt(opt_name, opt_lr):
     elif opt_name == "Adamax":
         opt = optim.Adamax([z], lr=opt_lr)	
     elif opt_name == "DiffGrad":
-        opt = DiffGrad([z], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
+        opt = torch_optimizer.DiffGrad([z], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
     elif opt_name == "AdamP":
-        opt = AdamP([z], lr=opt_lr)		    	    
+        opt = torch_optimizer.AdamP([z], lr=opt_lr)		    	    
     elif opt_name == "RMSprop":
         opt = optim.RMSprop([z], lr=opt_lr)
     elif opt_name == "MADGRAD":
-        opt = MADGRAD([z], lr=args.step_size)             
+        opt = torch_optimizer.MADGRAD([z], lr=opt_lr)      
     else:
         print("Unknown optimiser. Are choices broken?")
         opt = optim.Adam([z], lr=opt_lr)
@@ -868,7 +862,7 @@ try:
                         pil_tensor = TF.to_tensor(pil_image)
                         
                         # Re-encode
-                        z, *_ = model.encode(pil_tensor.to(device).unsqueeze(0) * 2 - 1)
+                        z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
                         z_orig = z.clone()
                         z.requires_grad_(True)
 

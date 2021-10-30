@@ -22,8 +22,11 @@
 import cmdLineArgs
 cmdLineArgs.init()
 
-
 import makeCutouts
+import imageUtils
+
+
+
 
 import random
 # from email.policy import default
@@ -70,11 +73,8 @@ import re
 from torchvision.datasets import CIFAR100
 
 # Supress warnings
-import warnings
-warnings.filterwarnings('ignore')
-
-
-
+# import warnings
+# warnings.filterwarnings('ignore')
 
 
 
@@ -98,123 +98,30 @@ def seed_torch(seed=42):
     torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
 
 
-
-
-
-# start actually doing stuff here.... process cmd line args    
-
-
-if cmdLineArgs.args.log_clip:
-    print("logging clip probabilities at end, loading vocab stuff")
-    cifar100 = CIFAR100(root=".", download=True, train=False)
-
-print( "Using mixed precision: " + str(cmdLineArgs.args.use_mixed_precision) )  
-
-if not cmdLineArgs.args.prompts and not cmdLineArgs.args.image_prompts:
-    cmdLineArgs.args.prompts = "A cute, smiling, Nerdy Rodent"
-
-if cmdLineArgs.args.cudnn_determinism:
-   torch.backends.cudnn.deterministic = True
-   torch.backends.cudnn.benchmark = False
-
-if not cmdLineArgs.args.augments:
-   cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
-
-# Split text prompts using the pipe character (weights are split later)
-if cmdLineArgs.args.prompts:
-    # For stories, there will be many phrases
-    story_phrases = [phrase.strip() for phrase in cmdLineArgs.args.prompts.split("^")]
-    
-    # Make a list of all phrases
-    all_phrases = []
-    for phrase in story_phrases:
-        all_phrases.append(phrase.split("|"))
-    
-    # First phrase
-    cmdLineArgs.args.prompts = all_phrases[0]
-    
-# Split target images using the pipe character (weights are split later)
-if cmdLineArgs.args.image_prompts:
-    cmdLineArgs.args.image_prompts = cmdLineArgs.args.image_prompts.split("|")
-    cmdLineArgs.args.image_prompts = [image.strip() for image in cmdLineArgs.args.image_prompts]
-
-if cmdLineArgs.args.make_video and cmdLineArgs.args.make_zoom_video:
-    print("Warning: Make video and make zoom video are mutually exclusive.")
-    cmdLineArgs.args.make_video = False
-    
-# Make video steps directory
-if cmdLineArgs.args.make_video or cmdLineArgs.args.make_zoom_video:
-    if not os.path.exists('steps'):
-        os.mkdir('steps')
-
-# Fallback to CPU if CUDA is not found and make sure GPU video rendering is also disabled
-# NB. May not work for AMD cards?
-if not cmdLineArgs.args.cuda_device == 'cpu' and not torch.cuda.is_available():
-    cmdLineArgs.args.cuda_device = 'cpu'
-    cmdLineArgs.args.video_fps = 0
-    print("Warning: No GPU found! Using the CPU instead. The iterations will be slow.")
-    print("Perhaps CUDA/ROCm or the right pytorch version is not properly installed?")
-
-# If a video_style_dir has been, then create a list of all the images
-if cmdLineArgs.args.video_style_dir:
-    print("Locating video frames...")
-    video_frame_list = []
-    for entry in os.scandir(cmdLineArgs.args.video_style_dir):
-        if (entry.path.endswith(".jpg")
-                or entry.path.endswith(".png")) and entry.is_file():
-            video_frame_list.append(entry.path)
-
-    # Reset a few options - same filename, different directory
-    if not os.path.exists('steps'):
-        os.mkdir('steps')
-
-    cmdLineArgs.args.init_image = video_frame_list[0]
-    filename = os.path.basename(cmdLineArgs.args.init_image)
-    cwd = os.getcwd()
-    cmdLineArgs.args.output = os.path.join(cwd, "steps", filename)
-    num_video_frames = len(video_frame_list) # for video styling
-
-
-# For zoom video
-def zoom_at(img, x, y, zoom):
-    w, h = img.size
-    zoom2 = zoom * 2
-    img = img.crop((x - w / zoom2, y - h / zoom2, 
-                    x + w / zoom2, y + h / zoom2))
-    return img.resize((w, h), Image.LANCZOS)
-
-
-# NR: Testing with different intital images
-def random_noise_image(w,h):
-    print('generating random noise image')
-    random_image = Image.fromarray(nn.random.randint(0,255,(w,h,3),dtype=np.dtype('uint8')))
-    return random_image
-
-
-# create initial gradient image
-def gradient_2d(start, stop, width, height, is_horizontal):
-    print('generating gradient2d random noise image')
-    if is_horizontal:
-        return np.tile(np.linspace(start, stop, width), (height, 1))
+# Set the optimiser
+def get_opt(opt_name, opt_lr):
+    if opt_name == "Adam":
+        opt = optim.Adam([z], lr=opt_lr)	# LR=0.1 (Default)
+    elif opt_name == "AdamW":
+        opt = optim.AdamW([z], lr=opt_lr)	
+    elif opt_name == "Adagrad":
+        opt = optim.Adagrad([z], lr=opt_lr)	
+    elif opt_name == "Adamax":
+        opt = optim.Adamax([z], lr=opt_lr)	
+    elif opt_name == "DiffGrad":
+        opt = torch_optimizer.DiffGrad([z], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
+    elif opt_name == "AdamP":
+        opt = torch_optimizer.AdamP([z], lr=opt_lr)		    	    
+    elif opt_name == "RMSprop":
+        opt = optim.RMSprop([z], lr=opt_lr)
+    elif opt_name == "MADGRAD":
+        opt = torch_optimizer.MADGRAD([z], lr=opt_lr)      
     else:
-        return np.tile(np.linspace(start, stop, height), (width, 1)).T
+        print("Unknown optimiser. Are choices broken?")
+        opt = optim.Adam([z], lr=opt_lr)
+    return opt
 
 
-def gradient_3d(width, height, start_list, stop_list, is_horizontal_list):
-    print('generating gradient3d random noise image')
-    result = np.zeros((height, width, len(start_list)), dtype=float)
-
-    for i, (start, stop, is_horizontal) in enumerate(zip(start_list, stop_list, is_horizontal_list)):
-        result[:, :, i] = gradient_2d(start, stop, width, height, is_horizontal)
-
-    return result
-
-    
-def random_gradient_image(w,h):
-    print('generating random gradient noise image')
-    array = gradient_3d(w, h, (0, 0, np.random.randint(0,255)), (np.random.randint(1,255), np.random.randint(2,255), np.random.randint(3,128)), (True, False, False))
-    random_image = Image.fromarray(np.uint8(array))
-    return random_image
 
 
 class ReplaceGrad(torch.autograd.Function):
@@ -310,13 +217,188 @@ def synth(z):
     else:
         z_q = vector_quantize(z.movedim(1, 3), vqganModel.quantize.embedding.weight).movedim(3, 1)
     return clamp_with_grad(vqganModel.decode(z_q).add(1).div(2), 0, 1)
-    
-def resize_image(image, out_size):
-    ratio = image.size[0] / image.size[1]
-    area = min(image.size[0] * image.size[1], out_size[0] * out_size[1])
-    size = round((area * ratio)**0.5), round((area / ratio)**0.5)
-    return image.resize(size, Image.LANCZOS)
 
+
+## calleed during training / end of training to log info, save files, etc.
+
+def WriteLogClipResults(imgout):
+    #image, class_id = cifar100[3637]
+
+    #out = synth(z) 
+    img = normalize(make_cutouts(imgout))
+
+    if cmdLineArgs.args.log_clip_oneshot:
+        #one shot identification
+        with torch.no_grad():        
+            image_features = clipPerceptor.encode_image(img).float()
+
+        text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
+        
+        with torch.no_grad():
+            text_features = clipPerceptor.encode_text(text_inputs).float()
+            text_features /= text_features.norm(dim=-1, keepdim=True)
+
+        # Pick the top 5 most similar labels for the image
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+        similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+        values, indices = similarity[0].topk(5)
+
+        # Print the result
+        print("\nOne-shot predictions:\n")
+        for value, index in zip(values, indices):
+            print(f"{cifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
+
+    if cmdLineArgs.args.log_clip:
+        # prompt matching percentages
+        textins = []
+        promptPartStrs = []
+        if cmdLineArgs.args.prompts:
+            for prompt in cmdLineArgs.args.prompts:
+                txt, weight, stop = split_prompt(prompt)  
+                splitTxt = txt.split()
+                for stxt in splitTxt:   
+                    promptPartStrs.append(stxt)       
+                    textins.append(clip.tokenize(stxt))
+                for i in range(len(splitTxt) - 1):
+                    promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1])       
+                    textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1]))
+                for i in range(len(splitTxt) - 2):
+                    promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2])       
+                    textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2]))                    
+
+        #text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
+        text_inputs = torch.cat(textins).to(clipDevice)
+        
+        with torch.no_grad():
+            image_features = clipPerceptor.encode_image(img).float()
+            text_features = clipPerceptor.encode_text(text_inputs).float()
+            text_features /= text_features.norm(dim=-1, keepdim=True)
+
+        # Pick the top 5 most similar labels for the image
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+        similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+        
+        top = 5
+        if top > similarity[0].size()[0]:
+            top = similarity[0].size()[0]
+
+        values, indices = similarity[0].topk(top)
+
+        # Print the result
+        print("\nPrompt matching predictions:\n")
+        for value, index in zip(values, indices):        
+            print(f"{promptPartStrs[index]:>16s}: {100 * value.item():.2f}%")    
+
+
+@torch.inference_mode()
+def checkin(i, losses, out):
+    print("\n*************************************************")
+    print(f'i: {i}, loss sum: {sum(losses).item():g}')
+    print("*************************************************")
+
+    promptNum = 0
+    for loss in losses:
+        print( "----> " + cmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
+        promptNum += 1
+
+    print(" ")
+
+    if cmdLineArgs.args.log_clip:
+        WriteLogClipResults(out)
+        print(" ")
+
+    info = PngImagePlugin.PngInfo()
+    info.add_text('comment', f'{cmdLineArgs.args.prompts}')
+    TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + cmdLineArgs.args.output, pnginfo=info)
+    
+    if cmdLineArgs.args.log_mem:
+        log_torch_mem()
+        print(" ")
+
+    print(" ")
+
+    #gc.collect()
+
+
+
+
+
+
+
+
+# start actually doing stuff here.... process cmd line args    
+if cmdLineArgs.args.log_clip:
+    print("logging clip probabilities at end, loading vocab stuff")
+    cifar100 = CIFAR100(root=".", download=True, train=False)
+
+print( "Using mixed precision: " + str(cmdLineArgs.args.use_mixed_precision) )  
+
+if not cmdLineArgs.args.prompts and not cmdLineArgs.args.image_prompts:
+    cmdLineArgs.args.prompts = "A cute, smiling, Nerdy Rodent"
+
+if cmdLineArgs.args.cudnn_determinism:
+   torch.backends.cudnn.deterministic = True
+   torch.backends.cudnn.benchmark = False
+
+if not cmdLineArgs.args.augments:
+   cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
+
+# Split text prompts using the pipe character (weights are split later)
+if cmdLineArgs.args.prompts:
+    # For stories, there will be many phrases
+    story_phrases = [phrase.strip() for phrase in cmdLineArgs.args.prompts.split("^")]
+    
+    # Make a list of all phrases
+    all_phrases = []
+    for phrase in story_phrases:
+        all_phrases.append(phrase.split("|"))
+    
+    # First phrase
+    cmdLineArgs.args.prompts = all_phrases[0]
+    
+# Split target images using the pipe character (weights are split later)
+if cmdLineArgs.args.image_prompts:
+    cmdLineArgs.args.image_prompts = cmdLineArgs.args.image_prompts.split("|")
+    cmdLineArgs.args.image_prompts = [image.strip() for image in cmdLineArgs.args.image_prompts]
+
+if cmdLineArgs.args.make_video and cmdLineArgs.args.make_zoom_video:
+    print("Warning: Make video and make zoom video are mutually exclusive.")
+    cmdLineArgs.args.make_video = False
+    
+# Make video steps directory
+if cmdLineArgs.args.make_video or cmdLineArgs.args.make_zoom_video:
+    if not os.path.exists('steps'):
+        os.mkdir('steps')
+
+# Fallback to CPU if CUDA is not found and make sure GPU video rendering is also disabled
+# NB. May not work for AMD cards?
+if not cmdLineArgs.args.cuda_device == 'cpu' and not torch.cuda.is_available():
+    cmdLineArgs.args.cuda_device = 'cpu'
+    cmdLineArgs.args.video_fps = 0
+    print("Warning: No GPU found! Using the CPU instead. The iterations will be slow.")
+    print("Perhaps CUDA/ROCm or the right pytorch version is not properly installed?")
+
+# If a video_style_dir has been, then create a list of all the images
+if cmdLineArgs.args.video_style_dir:
+    print("Locating video frames...")
+    video_frame_list = []
+    for entry in os.scandir(cmdLineArgs.args.video_style_dir):
+        if (entry.path.endswith(".jpg")
+                or entry.path.endswith(".png")) and entry.is_file():
+            video_frame_list.append(entry.path)
+
+    # Reset a few options - same filename, different directory
+    if not os.path.exists('steps'):
+        os.mkdir('steps')
+
+    cmdLineArgs.args.init_image = video_frame_list[0]
+    filename = os.path.basename(cmdLineArgs.args.init_image)
+    cwd = os.getcwd()
+    cmdLineArgs.args.output = os.path.join(cwd, "steps", filename)
+    num_video_frames = len(video_frame_list) # for video stylin
+    
 
 # Do it
 vqganDevice = torch.device(cmdLineArgs.args.cuda_device)
@@ -402,13 +484,13 @@ if cmdLineArgs.args.init_image:
         pil_tensor = TF.to_tensor(pil_image)
         z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 elif cmdLineArgs.args.init_noise == 'pixels':
-    img = random_noise_image(cmdLineArgs.args.size[0], cmdLineArgs.args.size[1])    
+    img = imageUtils.random_noise_image(cmdLineArgs.args.size[0], cmdLineArgs.args.size[1])    
     pil_image = img.convert('RGB')
     pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
     pil_tensor = TF.to_tensor(pil_image)
     z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 elif cmdLineArgs.args.init_noise == 'gradient':
-    img = random_gradient_image(cmdLineArgs.args.size[0], cmdLineArgs.args.size[1])
+    img = imageUtils.random_gradient_image(cmdLineArgs.args.size[0], cmdLineArgs.args.size[1])
     pil_image = img.convert('RGB')
     pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
     pil_tensor = TF.to_tensor(pil_image)
@@ -454,7 +536,7 @@ for prompt in cmdLineArgs.args.image_prompts:
     path, weight, stop = split_prompt(prompt)
     img = Image.open(path)
     pil_image = img.convert('RGB')
-    img = resize_image(pil_image, (sideX, sideY))
+    img = imageUtils.resize_image(pil_image, (sideX, sideY))
     batch = make_cutouts(TF.to_tensor(img).unsqueeze(0).to(clipDevice))
     embed = clipPerceptor.encode_image(normalize(batch)).float()
     pMs.append(Prompt(embed, weight, stop).to(clipDevice))
@@ -463,30 +545,6 @@ for seed, weight in zip(cmdLineArgs.args.noise_prompt_seeds, cmdLineArgs.args.no
     gen = torch.Generator().manual_seed(seed)
     embed = torch.empty([1, clipPerceptor.visual.output_dim]).normal_(generator=gen)
     pMs.append(Prompt(embed, weight).to(clipDevice))
-
-
-# Set the optimiser
-def get_opt(opt_name, opt_lr):
-    if opt_name == "Adam":
-        opt = optim.Adam([z], lr=opt_lr)	# LR=0.1 (Default)
-    elif opt_name == "AdamW":
-        opt = optim.AdamW([z], lr=opt_lr)	
-    elif opt_name == "Adagrad":
-        opt = optim.Adagrad([z], lr=opt_lr)	
-    elif opt_name == "Adamax":
-        opt = optim.Adamax([z], lr=opt_lr)	
-    elif opt_name == "DiffGrad":
-        opt = torch_optimizer.DiffGrad([z], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
-    elif opt_name == "AdamP":
-        opt = torch_optimizer.AdamP([z], lr=opt_lr)		    	    
-    elif opt_name == "RMSprop":
-        opt = optim.RMSprop([z], lr=opt_lr)
-    elif opt_name == "MADGRAD":
-        opt = torch_optimizer.MADGRAD([z], lr=opt_lr)      
-    else:
-        print("Unknown optimiser. Are choices broken?")
-        opt = optim.Adam([z], lr=opt_lr)
-    return opt
 
 opt = get_opt(cmdLineArgs.args.optimiser,cmdLineArgs. args.step_size)
 
@@ -506,110 +564,6 @@ if cmdLineArgs.args.init_image:
     print('Using initial image:', cmdLineArgs.args.init_image)
 if cmdLineArgs.args.noise_prompt_weights:
     print('Noise prompt weights:', cmdLineArgs.args.noise_prompt_weights)    
-
-def WriteLogClipResults(imgout):
-    #image, class_id = cifar100[3637]
-
-    #out = synth(z) 
-    img = normalize(make_cutouts(imgout))
-
-    if cmdLineArgs.args.log_clip_oneshot:
-        #one shot identification
-        with torch.no_grad():        
-            image_features = clipPerceptor.encode_image(img).float()
-
-        text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
-        
-        with torch.no_grad():
-            text_features = clipPerceptor.encode_text(text_inputs).float()
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-
-        # Pick the top 5 most similar labels for the image
-        image_features /= image_features.norm(dim=-1, keepdim=True)
-        text_features /= text_features.norm(dim=-1, keepdim=True)
-        similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-        values, indices = similarity[0].topk(5)
-
-        # Print the result
-        print("\nOne-shot predictions:\n")
-        for value, index in zip(values, indices):
-            print(f"{cifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
-
-    if cmdLineArgs.args.log_clip:
-        # prompt matching percentages
-        textins = []
-        promptPartStrs = []
-        if cmdLineArgs.args.prompts:
-            for prompt in cmdLineArgs.args.prompts:
-                txt, weight, stop = split_prompt(prompt)  
-                splitTxt = txt.split()
-                for stxt in splitTxt:   
-                    promptPartStrs.append(stxt)       
-                    textins.append(clip.tokenize(stxt))
-                for i in range(len(splitTxt) - 1):
-                    promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1])       
-                    textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1]))
-                for i in range(len(splitTxt) - 2):
-                    promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2])       
-                    textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2]))                    
-
-        #text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
-        text_inputs = torch.cat(textins).to(clipDevice)
-        
-        with torch.no_grad():
-            image_features = clipPerceptor.encode_image(img).float()
-            text_features = clipPerceptor.encode_text(text_inputs).float()
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-
-        # Pick the top 5 most similar labels for the image
-        image_features /= image_features.norm(dim=-1, keepdim=True)
-        text_features /= text_features.norm(dim=-1, keepdim=True)
-        similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-        
-        top = 5
-        if top > similarity[0].size()[0]:
-            top = similarity[0].size()[0]
-
-        values, indices = similarity[0].topk(top)
-
-        # Print the result
-        print("\nPrompt matching predictions:\n")
-        for value, index in zip(values, indices):        
-            print(f"{promptPartStrs[index]:>16s}: {100 * value.item():.2f}%")    
-
-
-@torch.inference_mode()
-def checkin(i, losses, out):
-    #losses_str = ', '.join(f'{loss.item():g}' for loss in losses)
-    #tqdm.write(f'i: {i}, loss: {sum(losses).item():g}, losses: {losses_str}')
-
-    print("\n*************************************************")
-    print(f'i: {i}, loss sum: {sum(losses).item():g}')
-    print("*************************************************")
-
-    promptNum = 0
-    for loss in losses:
-        print( "----> " + cmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
-        promptNum += 1
-
-    print(" ")
-
-    if cmdLineArgs.args.log_clip:
-        WriteLogClipResults(out)
-        print(" ")
-
-    info = PngImagePlugin.PngInfo()
-    info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-    TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + cmdLineArgs.args.output, pnginfo=info)
-    
-    if cmdLineArgs.args.log_mem:
-        log_torch_mem()
-        print(" ")
-
-    print(" ")
-
-    #torch.cuda.empty_cache()
-    #gc.collect()
 
 
 def ascend_txt(out):
@@ -731,7 +685,7 @@ try:
                                                 
                         # Zoom
                         if cmdLineArgs.args.zoom_scale != 1:
-                            pil_image_zoom = zoom_at(pil_image, sideX/2, sideY/2, cmdLineArgs.args.zoom_scale)
+                            pil_image_zoom = imageUtils.zoom_at(pil_image, sideX/2, sideY/2, cmdLineArgs.args.zoom_scale)
                         else:
                             pil_image_zoom = pil_image
                         

@@ -12,6 +12,10 @@
 # https://www.kaggle.com/yannnobrega/vqgan-clip-z-quantize-method
 
 
+# torch-optimizer info
+# https://pypi.org/project/torch-optimizer/
+#
+
 # Originally made by Katherine Crowson (https://github.com/crowsonkb, https://twitter.com/RiversHaveWings)
 # The original BigGAN+CLIP method was by https://twitter.com/advadnoun
 
@@ -54,7 +58,7 @@ from torch.cuda import get_device_properties
 torch.backends.cudnn.benchmark = False		# NR: True is a bit faster, but can lead to OOM. False is more deterministic.
 #torch.use_deterministic_algorithms(True)	# NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation
 
-from torch_optimizer import DiffGrad, AdamP, RAdam
+from torch_optimizer import DiffGrad, AdamP
 
 from CLIP import clip
 import kornia.augmentation as K
@@ -480,9 +484,7 @@ def get_opt(opt_name, opt_lr):
     elif opt_name == "DiffGrad":
         opt = DiffGrad([z], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
     elif opt_name == "AdamP":
-        opt = AdamP([z], lr=opt_lr)		    
-    elif opt_name == "RAdam":
-        opt = RAdam([z], lr=opt_lr)		    
+        opt = AdamP([z], lr=opt_lr)		    	    
     elif opt_name == "RMSprop":
         opt = optim.RMSprop([z], lr=opt_lr)
     elif opt_name == "MADGRAD":

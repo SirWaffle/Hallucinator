@@ -7,7 +7,7 @@
 # https://www.reddit.com/r/bigsleep/comments/onmz5r/mse_regulized_vqgan_clip/
 # https://colab.research.google.com/drive/1gFn9u3oPOgsNzJWEFmdK-N9h_y65b8fj?usp=sharing#scrollTo=wSfISAhyPmyp
 #
-# MADGRAD
+# MADGRAD implementation reference
 # https://www.kaggle.com/yannnobrega/vqgan-clip-z-quantize-method
 
 
@@ -18,7 +18,10 @@
 # Originally made by Katherine Crowson (https://github.com/crowsonkb, https://twitter.com/RiversHaveWings)
 # The original BigGAN+CLIP method was by https://twitter.com/advadnoun
 
+
+
 # trying to cut down on the absurd mess of a single file
+# not good dev practice, but better than a giant mass of stuff
 import cmdLineArgs
 cmdLineArgs.init()
 
@@ -34,6 +37,7 @@ from urllib.request import urlopen
 from tqdm import tqdm
 import sys
 import os
+import gc
 
 # pip install taming-transformers doesn't work with Gumbel, but does not yet work with coco etc
 # appending the path does work with Gumbel, but gives ModuleNotFoundError: No module named 'transformers' for coco etc
@@ -219,8 +223,8 @@ def synth(z):
     return clamp_with_grad(vqganModel.decode(z_q).add(1).div(2), 0, 1)
 
 
-## calleed during training / end of training to log info, save files, etc.
 
+## calleed during training / end of training to log info, save files, etc.
 def WriteLogClipResults(imgout):
     #image, class_id = cifar100[3637]
 
@@ -321,14 +325,92 @@ def checkin(i, losses, out):
 
     #gc.collect()
 
+def ascend_txt(out):
+
+    global i
+    with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
+
+        if clipDevice != vqganDevice:
+            iii = clipPerceptor.encode_image(normalize(make_cutouts(out).to(clipDevice))).float()
+        else:
+            iii = clipPerceptor.encode_image(normalize(make_cutouts(out))).float()
+
+        
+        result = []
+
+        if cmdLineArgs.args.init_weight:
+            # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
+            result.append(F.mse_loss(z, torch.zeros_like(z_orig)) * ((1/torch.tensor(i*2 + 1))*cmdLineArgs.args.init_weight) / 2)
+
+        for prompt in pMs:
+            result.append(prompt(iii))
+        
+        if cmdLineArgs.args.make_video:    
+            img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
+            img = np.transpose(img, (1, 2, 0))
+            imageio.imwrite('./steps/' + str(i) + '.png', np.array(img))
+
+        return result # return loss
 
 
 
+bestErrorScore = 99999
+def train(i):
+    global loss_idx
+    global bestErrorScore
+
+    with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
+        opt.zero_grad(set_to_none=True)
+        
+        out = synth(z) 
+        
+        lossAll = ascend_txt(out)
+        
+        if i % cmdLineArgs.args.display_freq == 0:
+            checkin(i, lossAll, out)  
+
+        if i % cmdLineArgs.args.save_freq == 0:          
+            info = PngImagePlugin.PngInfo()
+            info.add_text('comment', f'{cmdLineArgs.args.prompts}')
+            TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + cmdLineArgs.args.output, pnginfo=info)
+            
+        loss = sum(lossAll)
+        lossAvg = loss / len(lossAll)
+
+        if cmdLineArgs.args.save_best == True and bestErrorScore > lossAvg.item():
+            print("saving image for best error: " + str(lossAvg.item()))
+            bestErrorScore = lossAvg
+            info = PngImagePlugin.PngInfo()
+            info.add_text('comment', f'{cmdLineArgs.args.prompts}')
+            TF.to_pil_image(out[0].cpu()).save( "lowest_error_" + cmdLineArgs.args.output, pnginfo=info)
+
+        if cmdLineArgs.args.optimiser == "MADGRAD":
+            loss_idx.append(loss.item())
+            if i > 100: #use only 100 last looses to avg
+                avg_loss = sum(loss_idx[i-100:])/len(loss_idx[i-100:]) 
+            else:
+                avg_loss = sum(loss_idx)/len(loss_idx)
+
+            scheduler.step(avg_loss)
+        
+        if cmdLineArgs.args.use_mixed_precision == False:
+            loss.backward()
+            opt.step()
+        else:
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+        
+        #with torch.no_grad():
+        with torch.inference_mode():
+            z.copy_(z.maximum(z_min).minimum(z_max))
 
 
 
-
-# start actually doing stuff here.... process cmd line args    
+###########################################################
+# start actually doing stuff here.... process cmd line args
+# #########################################################
+    
 if cmdLineArgs.args.log_clip:
     print("logging clip probabilities at end, loading vocab stuff")
     cifar100 = CIFAR100(root=".", download=True, train=False)
@@ -344,6 +426,10 @@ if cmdLineArgs.args.cudnn_determinism:
 
 if not cmdLineArgs.args.augments:
    cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
+
+if cmdLineArgs.args.use_mixed_precision==True:
+    print("cant use augments in mixed precision mode yet...")
+    cmdLineArgs.args.augments = []
 
 # Split text prompts using the pipe character (weights are split later)
 if cmdLineArgs.args.prompts:
@@ -565,88 +651,6 @@ if cmdLineArgs.args.init_image:
 if cmdLineArgs.args.noise_prompt_weights:
     print('Noise prompt weights:', cmdLineArgs.args.noise_prompt_weights)    
 
-
-def ascend_txt(out):
-
-    global i
-    with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
-
-        if clipDevice != vqganDevice:
-            iii = clipPerceptor.encode_image(normalize(make_cutouts(out).to(clipDevice))).float()
-        else:
-            iii = clipPerceptor.encode_image(normalize(make_cutouts(out))).float()
-
-        
-        result = []
-
-        if cmdLineArgs.args.init_weight:
-            # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
-            result.append(F.mse_loss(z, torch.zeros_like(z_orig)) * ((1/torch.tensor(i*2 + 1))*cmdLineArgs.args.init_weight) / 2)
-
-        for prompt in pMs:
-            result.append(prompt(iii))
-        
-        if cmdLineArgs.args.make_video:    
-            img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
-            img = np.transpose(img, (1, 2, 0))
-            imageio.imwrite('./steps/' + str(i) + '.png', np.array(img))
-
-        return result # return loss
-
-
-bestErrorScore = 99999
-
-def train(i):
-    global loss_idx
-    global bestErrorScore
-
-    with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
-        opt.zero_grad(set_to_none=True)
-        
-        out = synth(z) 
-        
-        lossAll = ascend_txt(out)
-        
-        if i % cmdLineArgs.args.display_freq == 0:
-            checkin(i, lossAll, out)  
-
-        if i % cmdLineArgs.args.save_freq == 0:          
-            info = PngImagePlugin.PngInfo()
-            info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + cmdLineArgs.args.output, pnginfo=info)
-            
-        loss = sum(lossAll)
-        lossAvg = loss / len(lossAll)
-
-        if cmdLineArgs.args.save_best == True and bestErrorScore > lossAvg.item():
-            print("saving image for best error: " + str(lossAvg.item()))
-            bestErrorScore = lossAvg
-            info = PngImagePlugin.PngInfo()
-            info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            TF.to_pil_image(out[0].cpu()).save( "lowest_error_" + cmdLineArgs.args.output, pnginfo=info)
-
-        if cmdLineArgs.args.optimiser == "MADGRAD":
-            loss_idx.append(loss.item())
-            if i > 100: #use only 100 last looses to avg
-                avg_loss = sum(loss_idx[i-100:])/len(loss_idx[i-100:]) 
-            else:
-                avg_loss = sum(loss_idx)/len(loss_idx)
-
-            scheduler.step(avg_loss)
-        
-        if cmdLineArgs.args.use_mixed_precision == False:
-            loss.backward()
-            opt.step()
-        else:
-            scaler.scale(loss).backward()
-            scaler.step(opt)
-            scaler.update()
-        
-        #with torch.no_grad():
-        with torch.inference_mode():
-            z.copy_(z.maximum(z_min).minimum(z_max))
-
-
 loss_idx = []
 i = 0 # Iteration counter
 j = 0 # Zoom video frame counter
@@ -660,6 +664,9 @@ this_video_frame = 0 # for video styling
 
 # Creates a GradScaler once at the beginning of training.
 scaler = GradScaler()
+
+# clean up random junk before we start
+gc.collect()
 
 # Do it
 try:

@@ -225,6 +225,7 @@ def synth(z):
 
 
 ## calleed during training / end of training to log info, save files, etc.
+@torch.inference_mode()
 def WriteLogClipResults(imgout):
     #image, class_id = cifar100[3637]
 
@@ -394,10 +395,10 @@ def train(i):
             scheduler.step(avg_loss)
         
         if cmdLineArgs.args.use_mixed_precision == False:
-            loss.backward()
+            loss.backward(retain_graph=False) # TODO: had to retain graph due to error calling backwards twice with pytorch 1.10.0, need to figure this out, bad
             opt.step()
         else:
-            scaler.scale(loss).backward()
+            scaler.scale(loss).backward(retain_graph=False) # TODO: had to retain graph due to error calling backwards twice with pytorch 1.10.0, need to figure this out, bad
             scaler.step(opt)
             scaler.update()
         
@@ -411,6 +412,8 @@ def train(i):
 # start actually doing stuff here.... process cmd line args
 # #########################################################
     
+print("Using pyTorch: " + str( torch.__version__) )
+
 if cmdLineArgs.args.log_clip:
     print("logging clip probabilities at end, loading vocab stuff")
     cifar100 = CIFAR100(root=".", download=True, train=False)
@@ -494,13 +497,27 @@ print("---  VQGAN model loaded ---")
 log_torch_mem()
 print("--- / VQGAN model loaded ---")
 
+jit = False # this was true, but using jit causes it to break massively when requesting some data...
+if [int(n) for n in torch.__version__.split(".")] < [1, 8, 1]:
+    jit = False 
 
-jit = True if float(torch.__version__[:3]) < 1.8 else False
+print( "available clip models: " + str(clip.available_models() ))
 
+print("jit: " + str(jit))
+print("warning: CLIPs jit currently being forced to false because changes in pytorch made the jit model get all busted")
+print("using clip model: " + cmdLineArgs.args.clip_model)
 
 if cmdLineArgs.args.clip_cpu == False:
     clipDevice = vqganDevice
-    clipPerceptor = clip.load(cmdLineArgs.args.clip_model, jit=jit)[0].eval().requires_grad_(False).to(clipDevice)       
+    # hmm, updating to latest pytorch complains about .requires_grad being invalid? this works without jit
+    if jit == False:
+        clipPerceptor = clip.load(cmdLineArgs.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().requires_grad_(False).to(clipDevice)
+    else:
+        clipPerceptor = clip.load(cmdLineArgs.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().to(clipDevice)
+        # todo, figure otu what the actual solution to this is...
+        print("warning: disabled requires_grad_false for clip model, due to changes in pytorch 1.10.0")
+        #requires_grad_(False) #says cant be ons cript
+        #set_grad_enabled(False) #recursive object doesnt have property...       
 else:
     clipDevice = torch.device("cpu")
     clipPerceptor = clip.load(cmdLineArgs.args.clip_model, "cpu", jit=jit)[0].eval().requires_grad_(False).to(clipDevice) 

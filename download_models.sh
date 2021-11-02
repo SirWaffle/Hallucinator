@@ -3,14 +3,14 @@ LOC=checkpoints
 mkdir -p "$LOC"
 
 # Which models to download?
-IMAGENET_1024=false
+IMAGENET_1024=true
 IMAGENET_16384=true
-GUMBEL=false
+GUMBEL=true
 #WIKIART_1024=false
-WIKIART_16384=false
-COCO=false
-FACESHQ=false
-SFLCKR=false
+WIKIART_16384=true
+COCO=true
+FACESHQ=true
+SFLCKR=true
 
 
 if [ "$IMAGENET_1024" = true ] ; then

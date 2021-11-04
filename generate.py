@@ -30,7 +30,7 @@ import imageUtils
 
 
 
-
+import yaml
 import random
 # from email.policy import default
 from urllib.request import urlopen
@@ -195,6 +195,11 @@ def load_vqgan_model(config_path, checkpoint_path):
     global gumbel
     gumbel = False
     config = OmegaConf.load(config_path)
+
+    print("---  VQGAN config " + str(config_path))    
+    print(yaml.dump(OmegaConf.to_container(config)))
+    print("---  / VQGAN config " + str(config_path))
+
     if config.model.target == 'taming.models.vqgan.VQModel':
         model = vqgan.VQModel(**config.model.params)
         model.eval().requires_grad_(False)
@@ -411,7 +416,8 @@ def train(i):
 ###########################################################
 # start actually doing stuff here.... process cmd line args
 # #########################################################
-    
+print("Args: " + str(cmdLineArgs.args) )
+
 print("Using pyTorch: " + str( torch.__version__) )
 
 if cmdLineArgs.args.log_clip:
@@ -496,6 +502,7 @@ vqganModel = load_vqgan_model(cmdLineArgs.args.vqgan_config, cmdLineArgs.args.vq
 print("---  VQGAN model loaded ---")
 log_torch_mem()
 print("--- / VQGAN model loaded ---")
+
 
 jit = False # this was true, but using jit causes it to break massively when requesting some data...
 if [int(n) for n in torch.__version__.split(".")] < [1, 8, 1]:

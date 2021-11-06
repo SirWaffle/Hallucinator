@@ -101,6 +101,12 @@ def seed_torch(seed=42):
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
 
+def build_filename_path( filename ):
+    fullpath = cmdLineArgs.args.output_dir
+    if fullpath[-1] != '\\' and fullpath[-1] != '/':
+        fullpath += '/'
+    fullpath += filename
+    return fullpath
 
 # Set the optimiser
 def get_opt(opt_name, opt_lr):
@@ -321,7 +327,7 @@ def checkin(i, losses, out):
 
     info = PngImagePlugin.PngInfo()
     info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-    TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + cmdLineArgs.args.output, pnginfo=info)
+    TF.to_pil_image(out[0].cpu()).save( build_filename_path( str(i).zfill(5) + cmdLineArgs.args.output ), pnginfo=info)
     
     if cmdLineArgs.args.log_mem:
         log_torch_mem()
@@ -378,7 +384,7 @@ def train(i):
         if i % cmdLineArgs.args.save_freq == 0:          
             info = PngImagePlugin.PngInfo()
             info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            TF.to_pil_image(out[0].cpu()).save( str(i).zfill(5) + cmdLineArgs.args.output, pnginfo=info)
+            TF.to_pil_image(out[0].cpu()).save( build_filename_path( str(i).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
             
         loss = sum(lossAll)
         lossAvg = loss / len(lossAll)
@@ -388,7 +394,7 @@ def train(i):
             bestErrorScore = lossAvg
             info = PngImagePlugin.PngInfo()
             info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            TF.to_pil_image(out[0].cpu()).save( "lowest_error_" + cmdLineArgs.args.output, pnginfo=info)
+            TF.to_pil_image(out[0].cpu()).save( build_filename_path( "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
 
         if cmdLineArgs.args.optimiser == "MADGRAD":
             loss_idx.append(loss.item())
@@ -419,6 +425,8 @@ def train(i):
 print("Args: " + str(cmdLineArgs.args) )
 
 print("Using pyTorch: " + str( torch.__version__) )
+
+os.makedirs(os.path.dirname(cmdLineArgs.args.output_dir), exist_ok=True)
 
 if cmdLineArgs.args.log_clip:
     print("logging clip probabilities at end, loading vocab stuff")
@@ -620,7 +628,7 @@ else:
 out = synth(z)
 info = PngImagePlugin.PngInfo()
 info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-TF.to_pil_image(out[0].cpu()).save( str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output, pnginfo=info)
+TF.to_pil_image(out[0].cpu()).save( build_filename_path( str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
 
  
 z_orig = z.clone()
@@ -795,7 +803,7 @@ try:
                 # Save image
                 img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
                 img = np.transpose(img, (1, 2, 0))
-                imageio.imwrite(cmdLineArgs.args.output, np.array(img))                
+                imageio.imwrite(build_filename_path(cmdLineArgs.args.output), np.array(img))                
             
             
             # Ready to stop yet?
@@ -804,7 +812,7 @@ try:
                     # write one for the console
                     WriteLogClipResults(out)
                 	#write once to a file for easy grabbing outside of this script                
-                    text_file = open(cmdLineArgs.args.output + ".txt", "w")
+                    text_file = open(build_filename_path( cmdLineArgs.args.output + ".txt"), "w")
                     sys.stdout = text_file
                     WriteLogClipResults(out)
                     sys.stdout = sys.stdout 
@@ -888,7 +896,7 @@ if cmdLineArgs.args.make_video or cmdLineArgs.args.make_zoom_video:
         # Hardware encoding and video frame interpolation
         print("Creating interpolated frames...")
         ffmpeg_filter = f"minterpolate='mi_mode=mci:me=hexbs:me_mode=bidir:mc_mode=aobmc:vsbmc=1:mb_size=8:search_param=32:fps={cmdLineArgs.args.output_video_fps}'"
-        output_file = re.compile('\.png$').sub('.mp4', cmdLineArgs.args.output)
+        output_file = re.compile('\.png$').sub('.mp4', build_filename_path(cmdLineArgs.args.output))
         try:
             p = Popen(['ffmpeg',
                        '-y',
@@ -913,7 +921,7 @@ if cmdLineArgs.args.make_video or cmdLineArgs.args.make_zoom_video:
     else:
         # CPU
         fps = np.clip(total_frames/length,min_fps,max_fps)
-        output_file = re.compile('\.png$').sub('.mp4', cmdLineArgs.args.output)
+        output_file = re.compile('\.png$').sub('.mp4', build_filename_path(cmdLineArgs.args.output))
         try:
             p = Popen(['ffmpeg',
                        '-y',

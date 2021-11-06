@@ -1,7 +1,8 @@
 import argparse
 import torch
 from torch.cuda import get_device_properties
-
+import json
+import copy
 
 # this is used globally until i clean this all up
 args = None
@@ -23,9 +24,7 @@ def init():
     # Add the arguments
     vq_parser.add_argument("-p",    "--prompts", type=str, help="Text prompts", default=None, dest='prompts')
     vq_parser.add_argument("-ip",   "--image_prompts", type=str, help="Image prompts / target image", default=[], dest='image_prompts')
-    vq_parser.add_argument("-i",    "--iterations", type=int, help="Number of iterations", default=500, dest='max_iterations')
-    vq_parser.add_argument("-se",   "--save_every", type=int, help="Save image iterations", default=50, dest='save_freq')
-    vq_parser.add_argument("-sb",   "--save_best", help="Save the best scored image", action='store_true', dest='save_best')
+    vq_parser.add_argument("-i",    "--iterations", type=int, help="Number of iterations", default=500, dest='max_iterations')    
     vq_parser.add_argument("-stats","--stats_every", type=int, help="stats display frequency", default=50, dest='display_freq')
     vq_parser.add_argument("-s",    "--size", nargs=2, type=int, help="Image size (width height) (default: %(default)s)", default=[default_image_size,default_image_size], dest='size')
     vq_parser.add_argument("-ii",   "--init_image", type=str, help="Initial image", default=None, dest='init_image')
@@ -41,8 +40,7 @@ def init():
     vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
     vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
     vq_parser.add_argument("-sd",   "--seed", type=int, help="Seed", default=None, dest='seed')
-    vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser", choices=['Adam','AdamW','Adagrad','Adamax','DiffGrad','AdamP','RMSprop','MADGRAD'], default='Adam', dest='optimiser')
-    vq_parser.add_argument("-o",    "--output", type=str, help="Output filename", default="output.png", dest='output')
+    vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser", choices=['Adam','AdamW','Adagrad','Adamax','DiffGrad','AdamP','RMSprop','MADGRAD'], default='Adam', dest='optimiser')    
     vq_parser.add_argument("-vid",  "--video", action='store_true', help="Create video frames?", dest='make_video')
     vq_parser.add_argument("-zvid", "--zoom_video", action='store_true', help="Create zoom video?", dest='make_zoom_video')
     vq_parser.add_argument("-zs",   "--zoom_start", type=int, help="Zoom start iteration", default=0, dest='zoom_start')
@@ -59,6 +57,13 @@ def init():
     vq_parser.add_argument("-vsd",  "--video_style_dir", type=str, help="Directory with video frames to style", default=None, dest='video_style_dir')
     vq_parser.add_argument("-cd",   "--cuda_device", type=str, help="Cuda device to use", default="cuda:0", dest='cuda_device')
 
+
+    # manage output files and other logged data 
+    vq_parser.add_argument("-od",   "--output_dir", type=str, help="Output filename", default="./output/", dest='output_dir')
+    vq_parser.add_argument("-o",    "--output", type=str, help="Output filename", default="output.png", dest='output')    
+    vq_parser.add_argument("-se",   "--save_every", type=int, help="Save image iterations", default=50, dest='save_freq')
+    vq_parser.add_argument("-sb",   "--save_best", help="Save the best scored image", action='store_true', dest='save_best')
+
     # attempt to use mixed precision mode here
     # need to hunt down causes of the decoder produces inf's/nan's. current hack is to replace them with min/max floats, slower and produces poorer results than 32 bit.
     vq_parser.add_argument("-usemix", "--use_mixed",  action='store_true', help="mixed precision reduces memory size greatly, and gave me 50% more pixels, but seemingly at the cost of numeric instability and not quite as good results. Augmentations do not work in this mode, yet", 
@@ -69,7 +74,7 @@ def init():
     vq_parser.add_argument("-clipcpu",   "--clip_cpu",  action='store_true', help="forces the clip model into the cpu. slows things down but frees up memory so you can make larger images on low VRAM cards", 
                             dest='clip_cpu')
 
-    # helpful for tracking down various floating poitn errors 
+    # helpful for tracking down various floating point errors 
     vq_parser.add_argument("-ac",   "--anomalyChecker",  action='store_true', help="enabled the pyTorch anomaly checker for nan's, useful in mixed precision mode which has had some issues", 
                             dest='anomaly_checker')
 
@@ -80,5 +85,45 @@ def init():
     vq_parser.add_argument("-lcp",   "--logClipProbabilities",  action='store_true', dest='log_clip')
     vq_parser.add_argument("-lcos",  "--logClipOneShotGuesses",  action='store_true', dest='log_clip_oneshot')
 
+    #allow configs from json files / save to json file for later preservation
+    vq_parser.add_argument('--save_json', help='Save settings to file in json format. Ignored in json file')
+    vq_parser.add_argument('--save_json_strip_defaults', action='store_true', help='remove default / unset settings when saving config')
+    vq_parser.add_argument('--load_json', help='Load settings from file in json format. Command line options override values in file.')
+
+
+
+
     # Execute the parse_args() method
     args = vq_parser.parse_args()
+
+    if args.load_json:
+        with open(args.load_json, 'rt') as f:
+            t_args = argparse.Namespace()
+            jsonObj = json.load(f)
+            
+            # strip out the save/load json params
+            jsonObj.pop("save_json", None)
+            jsonObj.pop("load_json", None)
+            jsonObj.pop("save_json_strip_defaults", None)
+
+            t_args.__dict__.update(jsonObj)
+            args = vq_parser.parse_args(namespace=t_args)            
+
+    # Optional: support for saving settings into a json file
+    if args.save_json:
+        inputArgs = vars(copy.deepcopy(args))
+
+        # strip out the save/load json params
+        inputArgs.pop("save_json", None)
+        inputArgs.pop("load_json", None)
+        inputArgs.pop("save_json_strip_defaults", None)
+
+        if args.save_json_strip_defaults:
+            # lets try to strip out all default options that are the same (since versionc hanges may change defaults)            
+            defaultArgs = vars(vq_parser.parse_args(''))
+        
+            # generate output dictionary
+            inputArgs = {key:val for key, val in inputArgs.items() if not key in defaultArgs or defaultArgs[key] != val}
+
+        with open(args.save_json, 'wt') as f:
+            json.dump(inputArgs, f, indent=4)

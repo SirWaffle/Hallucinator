@@ -57,8 +57,6 @@ from torch.nn import functional as F
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 from torch.cuda import get_device_properties
-torch.backends.cudnn.benchmark = False		# NR: True is a bit faster, but can lead to OOM. False is more deterministic.
-#torch.use_deterministic_algorithms(True)	# NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation
 
 import torch_optimizer
 
@@ -149,23 +147,6 @@ class ReplaceGrad(torch.autograd.Function):
 replace_grad = ReplaceGrad.apply
 
 
-class ClampWithGrad(torch.autograd.Function):
-    @staticmethod
-    @custom_fwd
-    def forward(ctx, input, min, max):
-        ctx.min = min
-        ctx.max = max
-        ctx.save_for_backward(input)
-        return input.clamp(min, max)
-
-    @staticmethod
-    @custom_bwd
-    def backward(ctx, grad_in):
-        input, = ctx.saved_tensors
-        return grad_in * (grad_in * (input - input.clamp(ctx.min, ctx.max)) >= 0), None, None
-
-clamp_with_grad = ClampWithGrad.apply
-
 
 def vector_quantize(x, codebook):
     d = x.pow(2).sum(dim=-1, keepdim=True) + codebook.pow(2).sum(dim=1) - 2 * x @ codebook.T
@@ -231,7 +212,7 @@ def synth(z):
         z_q = vector_quantize(z.movedim(1, 3), vqganModel.quantize.embed.weight).movedim(3, 1)
     else:
         z_q = vector_quantize(z.movedim(1, 3), vqganModel.quantize.embedding.weight).movedim(3, 1)
-    return clamp_with_grad(vqganModel.decode(z_q).add(1).div(2), 0, 1)
+    return makeCutouts.clamp_with_grad(vqganModel.decode(z_q).add(1).div(2), 0, 1)
 
 
 
@@ -315,9 +296,10 @@ def checkin(i, losses, out):
     print("*************************************************")
 
     promptNum = 0
-    for loss in losses:
-        print( "----> " + cmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
-        promptNum += 1
+    if cmdLineArgs.args.prompts:
+        for loss in losses:
+            print( "----> " + cmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
+            promptNum += 1
 
     print(" ")
 
@@ -426,6 +408,14 @@ print("Args: " + str(cmdLineArgs.args) )
 
 print("Using pyTorch: " + str( torch.__version__) )
 
+if cmdLineArgs.args.seed is None:
+    seed = torch.seed()
+else:
+    seed = cmdLineArgs.args.seed  
+
+print('Using seed:', seed)
+seed_torch(seed)
+
 os.makedirs(os.path.dirname(cmdLineArgs.args.output_dir), exist_ok=True)
 
 if cmdLineArgs.args.log_clip:
@@ -440,9 +430,13 @@ if not cmdLineArgs.args.prompts and not cmdLineArgs.args.image_prompts:
 if cmdLineArgs.args.cudnn_determinism:
    torch.backends.cudnn.deterministic = True
    torch.backends.cudnn.benchmark = False
+    #torch.backends.cudnn.benchmark = False		# NR: True is a bit faster, but can lead to OOM. False is more deterministic.
+    #torch.use_deterministic_algorithms(True)	# NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation   
 
 if not cmdLineArgs.args.augments:
    cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
+elif cmdLineArgs.args.augments == 'None':
+    cmdLineArgs.args.augments = []
 
 if cmdLineArgs.args.use_mixed_precision==True:
     print("cant use augments in mixed precision mode yet...")
@@ -547,15 +541,6 @@ if cmdLineArgs.args.anomaly_checker:
     torch.autograd.set_detect_anomaly(True)
 
 
-if cmdLineArgs.args.seed is None:
-    seed = torch.seed()
-else:
-    seed = cmdLineArgs.args.seed  
-
-print('Using seed:', seed)
-seed_torch(seed)
-
-
 # clock=deepcopy(perceptor.visual.positional_embedding.data)
 # perceptor.visual.positional_embedding.data = clock/clock.max()
 # perceptor.visual.positional_embedding.data=clamp_with_grad(clock,0,1)
@@ -567,6 +552,8 @@ f = 2**(vqganModel.decoder.num_resolutions - 1)
 # 'latest','original','updated' or 'updatedpooling'
 if cmdLineArgs.args.cut_method == 'latest':
     make_cutouts = makeCutouts.MakeCutouts(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+elif cmdLineArgs.args.cut_method == 'squishTest':
+    make_cutouts = makeCutouts.MakeCutouts.MakeCutoutsSquish(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
 elif cmdLineArgs.args.cut_method == 'original':
     make_cutouts = makeCutouts.MakeCutoutsOrig(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
 elif cmdLineArgs.args.cut_method == 'updated':

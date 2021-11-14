@@ -2,7 +2,6 @@ absl-py==0.14.1
 aiohttp==3.7.4.post0
 aitextgen==0.5.2
 antlr4-python3-runtime==4.8
-apex @ file:///C:/Programming/genArt/apex
 asttokens==2.0.5
 async-timeout==3.0.1
 atomicwrites==1.4.0

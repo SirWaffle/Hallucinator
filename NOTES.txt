@@ -1,0 +1,6 @@
+pooling method seems to do squares only, and hit a max resolution of size x size blocks
+	also doesnt seem to make much difference with number of cuts at all, think it just slows it down...
+
+
+original does a much better job at high resilutions and getting details
+	number of cuts makes a difference here, seems more detail with more cuts. 

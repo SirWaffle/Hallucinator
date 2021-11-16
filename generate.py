@@ -19,14 +19,17 @@
 # The original BigGAN+CLIP method was by https://twitter.com/advadnoun
 
 
+# TODOS:
+# - output is no longer deterministic as of updating to pytorch 1.10 and whatever other libs updated with it
 
-# trying to cut down on the absurd mess of a single file
-# not good dev practice, but better than a giant mass of stuff
+
+
+# trying to cut down on the absurd mess of a single file ...
 import cmdLineArgs
 cmdLineArgs.init()
-
 import makeCutouts
 import imageUtils
+
 
 
 
@@ -64,8 +67,6 @@ from CLIP import clip
 import numpy as np
 import imageio
 
-import random
-
 from PIL import ImageFile, Image, PngImagePlugin, ImageChops
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -79,7 +80,6 @@ from torchvision.datasets import CIFAR100
 # warnings.filterwarnings('ignore')
 
 
-
 def log_torch_mem():
     t = torch.cuda.get_device_properties(0).total_memory
     r = torch.cuda.memory_reserved(0)
@@ -89,7 +89,6 @@ def log_torch_mem():
     print("reserved mem:    " + str(r))
     print("allocated mem:   " + str(a))
     print("free mem:        " + str(f))
-
 
 def seed_torch(seed=42):
     random.seed(seed)
@@ -401,13 +400,15 @@ def train(i):
 
 
 
+
+
+
+
+
+
 ###########################################################
 # start actually doing stuff here.... process cmd line args
 # #########################################################
-print("Args: " + str(cmdLineArgs.args) )
-
-print("Using pyTorch: " + str( torch.__version__) )
-
 if cmdLineArgs.args.seed is None:
     seed = torch.seed()
 else:
@@ -415,6 +416,10 @@ else:
 
 print('Using seed:', seed)
 seed_torch(seed)
+
+print("Args: " + str(cmdLineArgs.args) )
+
+print("Using pyTorch: " + str( torch.__version__) )
 
 os.makedirs(os.path.dirname(cmdLineArgs.args.output_dir), exist_ok=True)
 
@@ -429,9 +434,17 @@ if not cmdLineArgs.args.prompts and not cmdLineArgs.args.image_prompts:
 
 if cmdLineArgs.args.cudnn_determinism:
    torch.backends.cudnn.deterministic = True
-   torch.backends.cudnn.benchmark = False
-    #torch.backends.cudnn.benchmark = False		# NR: True is a bit faster, but can lead to OOM. False is more deterministic.
-    #torch.use_deterministic_algorithms(True)	# NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation   
+   torch.backends.cudnn.benchmark = False # NR: True is a bit faster, but can lead to OOM. False is more deterministic.
+   #torch.use_deterministic_algorithms(True)	   # NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation   
+
+   # CUBLAS determinism:
+   # Deterministic behavior was enabled with either `torch.use_deterministic_algorithms(True)` or `at::Context::setDeterministicAlgorithms(true)`, 
+   # but this operation is not deterministic because it uses CuBLAS and you have CUDA >= 10.2. To enable deterministic behavior in this case, 
+   # you must set an environment variable before running your PyTorch application: CUBLAS_WORKSPACE_CONFIG=:4096:8 or CUBLAS_WORKSPACE_CONFIG=:16:8. 
+   # For more information, go to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility  
+   #   
+   # set a debug environment variable CUBLAS_WORKSPACE_CONFIG to ":16:8" (may limit overall performance) or ":4096:8" (will increase library footprint in GPU memory by approximately 24MiB).
+   os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
 if not cmdLineArgs.args.augments:
    cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
@@ -505,15 +518,13 @@ print("---  VQGAN model loaded ---")
 log_torch_mem()
 print("--- / VQGAN model loaded ---")
 
-
-jit = False # this was true, but using jit causes it to break massively when requesting some data...
+jit = False
 if [int(n) for n in torch.__version__.split(".")] < [1, 8, 1]:
-    jit = False 
+    jit = True
 
 print( "available clip models: " + str(clip.available_models() ))
 
-print("jit: " + str(jit))
-print("warning: CLIPs jit currently being forced to false because changes in pytorch made the jit model get all busted")
+print("CLIP jit: " + str(jit))
 print("using clip model: " + cmdLineArgs.args.clip_model)
 
 if cmdLineArgs.args.clip_cpu == False:
@@ -522,11 +533,7 @@ if cmdLineArgs.args.clip_cpu == False:
     if jit == False:
         clipPerceptor = clip.load(cmdLineArgs.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().requires_grad_(False).to(clipDevice)
     else:
-        clipPerceptor = clip.load(cmdLineArgs.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().to(clipDevice)
-        # todo, figure otu what the actual solution to this is...
-        print("warning: disabled requires_grad_false for clip model, due to changes in pytorch 1.10.0")
-        #requires_grad_(False) #says cant be ons cript
-        #set_grad_enabled(False) #recursive object doesnt have property...       
+        clipPerceptor = clip.load(cmdLineArgs.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().to(clipDevice)    
 else:
     clipDevice = torch.device("cpu")
     clipPerceptor = clip.load(cmdLineArgs.args.clip_model, "cpu", jit=jit)[0].eval().requires_grad_(False).to(clipDevice) 
@@ -545,26 +552,47 @@ if cmdLineArgs.args.anomaly_checker:
 # perceptor.visual.positional_embedding.data = clock/clock.max()
 # perceptor.visual.positional_embedding.data=clamp_with_grad(clock,0,1)
 
-cut_size = clipPerceptor.visual.input_resolution
-f = 2**(vqganModel.decoder.num_resolutions - 1)
+clipPerceptorInputResolution = clipPerceptor.visual.input_resolution
+vqganNumResolutionsF = 2**(vqganModel.decoder.num_resolutions - 1)
+toksX, toksY = cmdLineArgs.args.size[0] // vqganNumResolutionsF, cmdLineArgs.args.size[1] // vqganNumResolutionsF
+sideX, sideY = toksX * vqganNumResolutionsF, toksY * vqganNumResolutionsF
+
+print("vqgan input resolutions: " + str(vqganModel.decoder.num_resolutions));
+print("cliperceptor input_res (aka cut size): " + str(clipPerceptorInputResolution) + " and whatever f is supposed to be: " + str(vqganNumResolutionsF))
+print("Toks X,Y: " + str(toksX) + ", " + str(toksY) + "      SizeX,Y: " + str(sideX) + ", " + str(sideY))
+# from default run:
+# vqgan input resolutions: 5
+# cliperceptor input_res: 224 and whatever f is supposed to be: 16
+# Toks X,Y: 75, 75      SizeX,Y: 1200 1200
+
+
 
 # Cutout class options:
-# 'latest','original','updated' or 'updatedpooling'
+# 'squish', 'latest','original','updated' or 'updatedpooling'
 if cmdLineArgs.args.cut_method == 'latest':
-    make_cutouts = makeCutouts.MakeCutouts(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
-elif cmdLineArgs.args.cut_method == 'squishTest':
-    make_cutouts = makeCutouts.MakeCutouts.MakeCutoutsSquish(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
-elif cmdLineArgs.args.cut_method == 'original':
-    make_cutouts = makeCutouts.MakeCutoutsOrig(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
-elif cmdLineArgs.args.cut_method == 'updated':
-    make_cutouts = makeCutouts.MakeCutoutsUpdate(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
-elif cmdLineArgs.args.cut_method == 'nrupdated':
-    make_cutouts = makeCutouts.MakeCutoutsNRUpdate(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
-else:
-    make_cutouts = makeCutouts.MakeCutoutsPoolingUpdate(cut_size, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)    
+    make_cutouts = makeCutouts.MakeCutouts(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+elif cmdLineArgs.args.cut_method == 'squish':
+    cutSize = cmdLineArgs.args.cut_size
+    if cutSize[0] == 0:
+        cutSize[0] = clipPerceptorInputResolution
 
-toksX, toksY = cmdLineArgs.args.size[0] // f, cmdLineArgs.args.size[1] // f
-sideX, sideY = toksX * f, toksY * f
+    if cutSize[1] == 0:
+        cutSize[1] = clipPerceptorInputResolution        
+
+    print("Squish Cutouts using: cutSize " + str(cutSize))
+
+    make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+elif cmdLineArgs.args.cut_method == 'original':
+    make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+elif cmdLineArgs.args.cut_method == 'updated':
+    make_cutouts = makeCutouts.MakeCutoutsUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+elif cmdLineArgs.args.cut_method == 'nrupdated':
+    make_cutouts = makeCutouts.MakeCutoutsNRUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+else:
+    make_cutouts = makeCutouts.MakeCutoutsPoolingUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)    
+
+
+
 
 # Gumbel or not?
 if gumbel:
@@ -824,13 +852,6 @@ try:
                         # Load the next frame, reset a few options - same filename, different directory
                         cmdLineArgs.args.init_image = video_frame_list[this_video_frame]
                         print("Next frame: ", cmdLineArgs.args.init_image)
-
-                        if cmdLineArgs.args.seed is None:
-                            seed = torch.seed()
-                        else:
-                            seed = cmdLineArgs.args.seed  
-                        torch.manual_seed(seed)
-                        print("Seed: ", seed)
 
                         filename = os.path.basename(cmdLineArgs.args.init_image)
                         cmdLineArgs.args.output = os.path.join(cwd, "steps", filename)

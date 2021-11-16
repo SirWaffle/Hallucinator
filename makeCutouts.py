@@ -72,10 +72,16 @@ def resample(input, size, align_corners=True):
     input = input.view([n, c, h, w])
     return F.interpolate(input, size, mode='bicubic', align_corners=align_corners)
 
+
+# modifiable pool / combo with original to create more detail in larger images
+# pooled versions cap out at cut_size blocks, causing high res images to look low res
+# no idea what im doing, still learning, but this looked cool enough to me on images > 1200x1200
 class MakeCutoutsSquish(nn.Module):
-    def __init__(self, cut_size, cutn, cut_pow=1.):
+    def __init__(self, cut_size, cut_size_x, cut_size_y, cutn, cut_pow=1.):
         super().__init__()
-        self.cut_size = cut_size
+        self.cut_size = cut_size # clip cut size, seems to be const with clip
+        self.cut_size_x = cut_size_x
+        self.cut_size_y = cut_size_y
         self.cutn = cutn
         self.cut_pow = cut_pow # not used with pooling
         
@@ -113,28 +119,28 @@ class MakeCutoutsSquish(nn.Module):
         print(augment_list)
         
         # Pooling
-        self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
-        self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
+        self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size_x, self.cut_size_y))
+        self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size_x, self.cut_size_y))
 
     @autocast(enabled=cmdLineArgs.args.use_mixed_precision)
     def forward(self, input):
-        #sideY, sideX = input.shape[2:4]
-        #max_size = min(sideX, sideY)
-        #min_size = min(sideX, sideY, self.cut_size)
-        #cutouts = []
-        #for _ in range(self.cutn):
-        #    size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
-        #    offsetx = torch.randint(0, sideX - size + 1, ())
-        #    offsety = torch.randint(0, sideY - size + 1, ())
-        #    cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
-        #    cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
-        #return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1)
+        sideY, sideX = input.shape[2:4]
+        max_size = min(sideX, sideY)
+        min_size = min(sideX, sideY, self.cut_size)
 
         cutouts = []
         
         for _ in range(self.cutn):            
-            # Use Pooling
-            cutout = (self.av_pool(input) + self.max_pool(input))/2
+            # Use Pooling and original method together
+
+            size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
+            offsetx = torch.randint(0, sideX - size + 1, ())
+            offsety = torch.randint(0, sideY - size + 1, ())
+            cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
+
+            # now pool for some reason? dont know what i'm doing but the results are good...
+            cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
+
             cutouts.append(cutout)
             
         batch = self.augs(torch.cat(cutouts, dim=0))

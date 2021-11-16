@@ -36,9 +36,6 @@ def init():
     vq_parser.add_argument("-nps",  "--noise_prompt_seeds", nargs="*", type=int, help="Noise prompt seeds", default=[], dest='noise_prompt_seeds')
     vq_parser.add_argument("-npw",  "--noise_prompt_weights", nargs="*", type=float, help="Noise prompt weights", default=[], dest='noise_prompt_weights')
     vq_parser.add_argument("-lr",   "--learning_rate", type=float, help="Learning rate", default=0.1, dest='step_size')
-    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','updated','nrupdated','updatedpooling','latest'], default='latest', dest='cut_method')
-    vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
-    vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
     vq_parser.add_argument("-sd",   "--seed", type=int, help="Seed", default=None, dest='seed')
     vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser", choices=['Adam','AdamW','Adagrad','Adamax','DiffGrad','AdamP','RMSprop','MADGRAD'], default='Adam', dest='optimiser')    
     vq_parser.add_argument("-vid",  "--video", action='store_true', help="Create video frames?", dest='make_video')
@@ -57,6 +54,12 @@ def init():
     vq_parser.add_argument("-vsd",  "--video_style_dir", type=str, help="Directory with video frames to style", default=None, dest='video_style_dir')
     vq_parser.add_argument("-cd",   "--cuda_device", type=str, help="Cuda device to use", default="cuda:0", dest='cuda_device')
 
+    # cuts and pooling
+    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','updated','nrupdated','updatedpooling','latest', 'squish'], default='latest', dest='cut_method')
+    vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
+    vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
+
+    vq_parser.add_argument("-cutsize",    "--cut_size", nargs=2, type=int, help="Cut size (width height) (clip controlled)", default=[0,0], dest='cut_size')
 
     # manage output files and other logged data 
     vq_parser.add_argument("-od",   "--output_dir", type=str, help="Output filename", default="./output/", dest='output_dir')

@@ -24,6 +24,13 @@
 
 
 
+# shut off tqdm log spam by uncommenting the below
+from tqdm import tqdm
+from functools import partialmethod
+tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
+
+
+
 # trying to cut down on the absurd mess of a single file ...
 import cmdLineArgs
 cmdLineArgs.init()
@@ -31,13 +38,10 @@ import makeCutouts
 import imageUtils
 
 
-
-
 import yaml
 import random
 # from email.policy import default
 from urllib.request import urlopen
-from tqdm import tqdm
 import sys
 import os
 import gc
@@ -315,6 +319,7 @@ def checkin(i, losses, out):
         print(" ")
 
     print(" ")
+    sys.stdout.flush()
 
     #gc.collect()
 
@@ -581,7 +586,12 @@ elif cmdLineArgs.args.cut_method == 'squish':
 
     print("Squish Cutouts using: cutSize " + str(cutSize))
 
-    make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+    # pooling requires proper matching sizes for now
+    if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
+        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True)
+    else:
+        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True)
+
 elif cmdLineArgs.args.cut_method == 'original':
     make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
 elif cmdLineArgs.args.cut_method == 'updated':
@@ -711,6 +721,8 @@ this_video_frame = 0 # for video styling
 
 # Creates a GradScaler once at the beginning of training.
 scaler = GradScaler()
+
+sys.stdout.flush()
 
 # clean up random junk before we start
 gc.collect()

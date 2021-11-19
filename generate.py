@@ -22,7 +22,7 @@
 # TODOS:
 # - output is no longer deterministic as of updating to pytorch 1.10 and whatever other libs updated with it
 
-
+import sys
 
 # shut off tqdm log spam by uncommenting the below
 from tqdm import tqdm
@@ -32,25 +32,36 @@ tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
 
 # trying to cut down on the absurd mess of a single file ...
-import cmdLineArgs
+sys.path.append('src')
+
+from src import cmdLineArgs
 cmdLineArgs.init()
-import makeCutouts
-import imageUtils
+
+from src import makeCutouts
+makeCutouts.use_mixed_precision = cmdLineArgs.args.use_mixed_precision
+
+from src import imageUtils
+
+
 
 
 import yaml
 import random
-# from email.policy import default
 from urllib.request import urlopen
-import sys
 import os
 import gc
+
+from omegaconf import OmegaConf
+
+# i want to run clip from source, not an install. I have clip in a dir alongside this project
+# so i append the parent dir to the proj and we expect to find a folder named clip there
+sys.path.append('..\\')
+from CLIP import clip
+
 
 # pip install taming-transformers doesn't work with Gumbel, but does not yet work with coco etc
 # appending the path does work with Gumbel, but gives ModuleNotFoundError: No module named 'transformers' for coco etc
 sys.path.append('taming-transformers')
-
-from omegaconf import OmegaConf
 from taming.models import cond_transformer, vqgan
 #import taming.modules 
 
@@ -67,7 +78,6 @@ from torch.cuda import get_device_properties
 
 import torch_optimizer
 
-from CLIP import clip
 import numpy as np
 import imageio
 
@@ -78,10 +88,6 @@ from subprocess import Popen, PIPE
 import re
 
 from torchvision.datasets import CIFAR100
-
-# Supress warnings
-# import warnings
-# warnings.filterwarnings('ignore')
 
 
 def log_torch_mem():
@@ -325,7 +331,7 @@ def checkin(i, losses, out):
 
 def ascend_txt(out):
 
-    global i
+    global iteration
     with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
 
         if clipDevice != vqganDevice:
@@ -338,16 +344,11 @@ def ascend_txt(out):
 
         if cmdLineArgs.args.init_weight:
             # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
-            result.append(F.mse_loss(z, torch.zeros_like(z_orig)) * ((1/torch.tensor(i*2 + 1))*cmdLineArgs.args.init_weight) / 2)
+            result.append(F.mse_loss(z, torch.zeros_like(z_orig)) * ((1/torch.tensor(iteration*2 + 1))*cmdLineArgs.args.init_weight) / 2)
 
         for prompt in pMs:
             result.append(prompt(iii))
         
-        if cmdLineArgs.args.make_video:    
-            img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
-            img = np.transpose(img, (1, 2, 0))
-            imageio.imwrite('./steps/' + str(i) + '.png', np.array(img))
-
         return result # return loss
 
 
@@ -450,6 +451,10 @@ if cmdLineArgs.args.cudnn_determinism:
    #   
    # set a debug environment variable CUBLAS_WORKSPACE_CONFIG to ":16:8" (may limit overall performance) or ":4096:8" (will increase library footprint in GPU memory by approximately 24MiB).
    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+   #EXPORT CUBLAS_WORKSPACE_CONFIG=:4096:8
+else:
+    torch.backends.cudnn.benchmark = True #apparently slightly faster, but less deterministic
+
 
 if not cmdLineArgs.args.augments:
    cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
@@ -478,42 +483,12 @@ if cmdLineArgs.args.image_prompts:
     cmdLineArgs.args.image_prompts = cmdLineArgs.args.image_prompts.split("|")
     cmdLineArgs.args.image_prompts = [image.strip() for image in cmdLineArgs.args.image_prompts]
 
-if cmdLineArgs.args.make_video and cmdLineArgs.args.make_zoom_video:
-    print("Warning: Make video and make zoom video are mutually exclusive.")
-    cmdLineArgs.args.make_video = False
-    
-# Make video steps directory
-if cmdLineArgs.args.make_video or cmdLineArgs.args.make_zoom_video:
-    if not os.path.exists('steps'):
-        os.mkdir('steps')
-
 # Fallback to CPU if CUDA is not found and make sure GPU video rendering is also disabled
 # NB. May not work for AMD cards?
 if not cmdLineArgs.args.cuda_device == 'cpu' and not torch.cuda.is_available():
     cmdLineArgs.args.cuda_device = 'cpu'
-    cmdLineArgs.args.video_fps = 0
     print("Warning: No GPU found! Using the CPU instead. The iterations will be slow.")
     print("Perhaps CUDA/ROCm or the right pytorch version is not properly installed?")
-
-# If a video_style_dir has been, then create a list of all the images
-if cmdLineArgs.args.video_style_dir:
-    print("Locating video frames...")
-    video_frame_list = []
-    for entry in os.scandir(cmdLineArgs.args.video_style_dir):
-        if (entry.path.endswith(".jpg")
-                or entry.path.endswith(".png")) and entry.is_file():
-            video_frame_list.append(entry.path)
-
-    # Reset a few options - same filename, different directory
-    if not os.path.exists('steps'):
-        os.mkdir('steps')
-
-    cmdLineArgs.args.init_image = video_frame_list[0]
-    filename = os.path.basename(cmdLineArgs.args.init_image)
-    cwd = os.getcwd()
-    cmdLineArgs.args.output = os.path.join(cwd, "steps", filename)
-    num_video_frames = len(video_frame_list) # for video stylin
-    
 
 # Do it
 vqganDevice = torch.device(cmdLineArgs.args.cuda_device)
@@ -575,7 +550,7 @@ print("Toks X,Y: " + str(toksX) + ", " + str(toksY) + "      SizeX,Y: " + str(si
 # Cutout class options:
 # 'squish', 'latest','original','updated' or 'updatedpooling'
 if cmdLineArgs.args.cut_method == 'latest':
-    make_cutouts = makeCutouts.MakeCutouts(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+    make_cutouts = makeCutouts.MakeCutouts(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
 elif cmdLineArgs.args.cut_method == 'squish':
     cutSize = cmdLineArgs.args.cut_size
     if cutSize[0] == 0:
@@ -588,18 +563,18 @@ elif cmdLineArgs.args.cut_method == 'squish':
 
     # pooling requires proper matching sizes for now
     if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
-        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True)
+        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
     else:
-        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True)
+        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
 
 elif cmdLineArgs.args.cut_method == 'original':
-    make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+    make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
 elif cmdLineArgs.args.cut_method == 'updated':
-    make_cutouts = makeCutouts.MakeCutoutsUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+    make_cutouts = makeCutouts.MakeCutoutsUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
 elif cmdLineArgs.args.cut_method == 'nrupdated':
-    make_cutouts = makeCutouts.MakeCutoutsNRUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)
+    make_cutouts = makeCutouts.MakeCutoutsNRUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
 else:
-    make_cutouts = makeCutouts.MakeCutoutsPoolingUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow)    
+    make_cutouts = makeCutouts.MakeCutoutsPoolingUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)    
 
 
 
@@ -709,11 +684,8 @@ if cmdLineArgs.args.noise_prompt_weights:
     print('Noise prompt weights:', cmdLineArgs.args.noise_prompt_weights)    
 
 loss_idx = []
-i = 0 # Iteration counter
-j = 0 # Zoom video frame counter
-p = 1 # Phrase counter
-smoother = 0 # Smoother counter
-this_video_frame = 0 # for video styling
+iteration = 0 # Iteration counter
+phraseCounter = 1 # Phrase counter
 
 # Messing with learning rate / optimisers
 #variable_lr = args.step_size
@@ -731,58 +703,16 @@ gc.collect()
 try:
     with tqdm() as pbar:
         while True:            
-            # Change generated image
-            if cmdLineArgs.args.make_zoom_video:
-                if i % cmdLineArgs.args.zoom_frequency == 0:
-                    out = synth(z)
-                    
-                    # Save image
-                    img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
-                    img = np.transpose(img, (1, 2, 0))
-                    imageio.imwrite('./steps/' + str(j) + '.png', np.array(img))
 
-                    # Time to start zooming?                    
-                    if cmdLineArgs.args.zoom_start <= i:
-                        # Convert z back into a Pil image                    
-                        #pil_image = TF.to_pil_image(out[0].cpu())
-                        
-                        # Convert NP to Pil image
-                        pil_image = Image.fromarray(np.array(img).astype('uint8'), 'RGB')
-                                                
-                        # Zoom
-                        if cmdLineArgs.args.zoom_scale != 1:
-                            pil_image_zoom = imageUtils.zoom_at(pil_image, sideX/2, sideY/2, cmdLineArgs.args.zoom_scale)
-                        else:
-                            pil_image_zoom = pil_image
-                        
-                        # Shift - https://pillow.readthedocs.io/en/latest/reference/ImageChops.html
-                        if cmdLineArgs.args.zoom_shift_x or cmdLineArgs.args.zoom_shift_y:
-                            # This one wraps the image
-                            pil_image_zoom = ImageChops.offset(pil_image_zoom, cmdLineArgs.args.zoom_shift_x, cmdLineArgs.args.zoom_shift_y)
-                        
-                        # Convert image back to a tensor again
-                        pil_tensor = TF.to_tensor(pil_image_zoom)
-                        
-                        # Re-encode
-                        z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
-                        z_orig = z.clone()
-                        z.requires_grad_(True)
-
-                        # Re-create optimiser
-                        opt = get_opt(cmdLineArgs.args.optimiser, cmdLineArgs.args.step_size)
-                    
-                    # Next
-                    j += 1
-            
             # Change text prompt
             if cmdLineArgs.args.prompt_frequency > 0:
-                if i % cmdLineArgs.args.prompt_frequency == 0 and i > 0:
+                if iteration % cmdLineArgs.args.prompt_frequency == 0 and iteration > 0:
                     # In case there aren't enough phrases, just loop
-                    if p >= len(all_phrases):
-                        p = 0
+                    if phraseCounter >= len(all_phrases):
+                        phraseCounter = 0
                     
                     pMs = []
-                    cmdLineArgs.args.prompts = all_phrases[p]
+                    cmdLineArgs.args.prompts = all_phrases[phraseCounter]
 
                     # Show user we're changing prompt                                
                     print(cmdLineArgs.args.prompts)
@@ -792,49 +722,22 @@ try:
                         embed = clipPerceptor.encode_text(clip.tokenize(txt).to(clipDevice)).float()
                         pMs.append(Prompt(embed, weight, stop).to(clipDevice))
 
-                                        
-                    '''
-                    # Smooth test
-                    smoother = args.zoom_frequency * 15 # smoothing over x frames
-                    variable_lr = args.step_size * 0.25
-                    opt = get_opt(args.optimiser, variable_lr)
-                    '''
-                    
-                    p += 1
-            
-            '''
-            if smoother > 0:
-                if smoother == 1:
-                    opt = get_opt(args.optimiser, args.step_size)
-                smoother -= 1
-            '''
-            
-            '''
-            # Messing with learning rate / optimisers
-            if i % 225 == 0 and i > 0:
-                variable_optimiser_item = random.choice(optimiser_list)
-                variable_optimiser = variable_optimiser_item[0]
-                variable_lr = variable_optimiser_item[1]
-                
-                opt = get_opt(variable_optimiser, variable_lr)
-                print("New opt: %s, lr= %f" %(variable_optimiser,variable_lr)) 
-            '''
+
+                    phraseCounter += 1
             
 
             # Training time
-            train(i)
-
-            if i == cmdLineArgs.args.max_iterations:
-                out = synth(z)
-                    
-                # Save image
+            train(iteration)
+           
+            
+            # Ready to stop yet?
+            if iteration == cmdLineArgs.args.max_iterations:
+                # Save final image
+                out = synth(z)                                    
                 img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
                 img = np.transpose(img, (1, 2, 0))
                 imageio.imwrite(build_filename_path(cmdLineArgs.args.output), np.array(img))                
-            
-            
-            # Ready to stop yet?
-            if i == cmdLineArgs.args.max_iterations:
+
                 if cmdLineArgs.args.log_clip:    
                     # write one for the console
                     WriteLogClipResults(out)
@@ -845,121 +748,14 @@ try:
                     sys.stdout = sys.stdout 
                     text_file.close()
 
-                if not cmdLineArgs.args.video_style_dir:
-                    # we're done
-                    break
-                else:                    
-                    if this_video_frame == (num_video_frames - 1):
-                        # we're done
-                        make_styled_video = True
-                        break
-                    else:
-                        # Next video frame
-                        this_video_frame += 1
+                break
 
-                        # Reset the iteration count
-                        i = -1
-                        pbar.reset()
-                                                
-                        # Load the next frame, reset a few options - same filename, different directory
-                        cmdLineArgs.args.init_image = video_frame_list[this_video_frame]
-                        print("Next frame: ", cmdLineArgs.args.init_image)
 
-                        filename = os.path.basename(cmdLineArgs.args.init_image)
-                        cmdLineArgs.args.output = os.path.join(cwd, "steps", filename)
 
-                        # Load and resize image
-                        img = Image.open(cmdLineArgs.args.init_image)
-                        pil_image = img.convert('RGB')
-                        pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
-                        pil_tensor = TF.to_tensor(pil_image)
-                        
-                        # Re-encode
-                        z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
-                        z_orig = z.clone()
-                        z.requires_grad_(True)
-
-                        # Re-create optimiser
-                        opt = get_opt(cmdLineArgs.args.optimiser, cmdLineArgs.args.step_size)
-
-            i += 1
+            iteration += 1
             pbar.update()
+
 except KeyboardInterrupt:
     pass
 
-# All done :)
 
-# Video generation
-if cmdLineArgs.args.make_video or cmdLineArgs.args.make_zoom_video:
-    init_frame = 1      # Initial video frame
-    if cmdLineArgs.args.make_zoom_video:
-        last_frame = j
-    else:
-        last_frame = i  # This will raise an error if that number of frames does not exist.
-
-    length = cmdLineArgs.args.video_length # Desired time of the video in seconds
-
-    min_fps = 10
-    max_fps = 60
-
-    total_frames = last_frame-init_frame
-
-    frames = []
-    tqdm.write('Generating video...')
-    for i in range(init_frame,last_frame):
-        temp = Image.open("./steps/"+ str(i) +'.png')
-        keep = temp.copy()
-        frames.append(keep)
-        temp.close()
-    
-    if cmdLineArgs.args.output_video_fps > 9:
-        # Hardware encoding and video frame interpolation
-        print("Creating interpolated frames...")
-        ffmpeg_filter = f"minterpolate='mi_mode=mci:me=hexbs:me_mode=bidir:mc_mode=aobmc:vsbmc=1:mb_size=8:search_param=32:fps={cmdLineArgs.args.output_video_fps}'"
-        output_file = re.compile('\.png$').sub('.mp4', build_filename_path(cmdLineArgs.args.output))
-        try:
-            p = Popen(['ffmpeg',
-                       '-y',
-                       '-f', 'image2pipe',
-                       '-vcodec', 'png',
-                       '-r', str(cmdLineArgs.args.input_video_fps),               
-                       '-i',
-                       '-',
-                       '-b:v', '10M',
-                       '-vcodec', 'h264_nvenc',
-                       '-pix_fmt', 'yuv420p',
-                       '-strict', '-2',
-                       '-filter:v', f'{ffmpeg_filter}',
-                       '-metadata', f'comment={cmdLineArgs.args.prompts}',
-                   output_file], stdin=PIPE)
-        except FileNotFoundError:
-            print("ffmpeg command failed - check your installation")
-        for im in tqdm(frames):
-            im.save(p.stdin, 'PNG')
-        p.stdin.close()
-        p.wait()
-    else:
-        # CPU
-        fps = np.clip(total_frames/length,min_fps,max_fps)
-        output_file = re.compile('\.png$').sub('.mp4', build_filename_path(cmdLineArgs.args.output))
-        try:
-            p = Popen(['ffmpeg',
-                       '-y',
-                       '-f', 'image2pipe',
-                       '-vcodec', 'png',
-                       '-r', str(fps),
-                       '-i',
-                       '-',
-                       '-vcodec', 'libx264',
-                       '-r', str(fps),
-                       '-pix_fmt', 'yuv420p',
-                       '-crf', '17',
-                       '-preset', 'veryslow',
-                       '-metadata', f'comment={cmdLineArgs.args.prompts}',
-                       output_file], stdin=PIPE)
-        except FileNotFoundError:
-            print("ffmpeg command failed - check your installation")        
-        for im in tqdm(frames):
-            im.save(p.stdin, 'PNG')
-        p.stdin.close()
-        p.wait()     

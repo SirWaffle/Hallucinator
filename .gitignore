@@ -22,3 +22,4 @@ cifar-100-python/file.txt~
 cifar-100-python/meta
 cifar-100-python/test
 cifar-100-python/train
+clipModels/ViT-B-32.pt

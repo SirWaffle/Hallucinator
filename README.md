@@ -52,10 +52,10 @@ pip install ftfy regex tqdm omegaconf pytorch-lightning IPython kornia imageio i
 Clone required repositories:
 
 ```sh
-git clone 'https://github.com/nerdyrodent/VQGAN-CLIP'
+git clone "https://github.com/SirWaffle/Hallucinator"
+git clone "https://github.com/SirWaffle/CLIP"
 cd VQGAN-CLIP
-git clone 'https://github.com/openai/CLIP'
-git clone 'https://github.com/CompVis/taming-transformers'
+git clone "https://github.com/SirWaffle/taming-transformers.git"
 ```
 
 Note: In my development environment both CLIP and taming-transformers are present in the local directory, and so aren't present in the `requirements.txt` or `vqgan.yml` files.

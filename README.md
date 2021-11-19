@@ -34,13 +34,13 @@ This example uses [Anaconda](https://www.anaconda.com/products/individual#Downlo
 Create a new virtual Python environment for VQGAN-CLIP:
 
 ```sh
-conda create --name vqgan python=3.9
-conda activate vqgan
+conda create --name hallucinator python=3.9
+conda activate hallucinator
 ```
 
 Install Pytorch in the new enviroment:
 <https://pytorch.org/get-started/locally/>
-will generate a command line for you to install the latest pytorch
+will generate a command line for you to install the latest pytorch. I use the conda install, but the pip command version should also work
 
 
 Install other required Python packages:

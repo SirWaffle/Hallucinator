@@ -15,6 +15,8 @@ use_mixed_precision = False
 deterministic = False
 
 
+
+
 class ClampWithGrad(torch.autograd.Function):
     @staticmethod
     @custom_fwd
@@ -127,6 +129,7 @@ def setupAugmentList(augments, cut_size_x, cut_size_y):
 
 # modifiable pool / combo with original to create more detail in larger images
 # no idea what im doing, still learning, but this looked cool enough to me on images > 1200x1200
+# squish
 class MakeCutoutsSquish(nn.Module):
     def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
         super().__init__()
@@ -186,9 +189,9 @@ class MakeCutoutsSquish(nn.Module):
 
 
 #latest make cutouts this came with - works well on images <= 600x600 ish
-# i belive the pooling like this causes a uniform distribution of squares of
-# cutsize
-class MakeCutouts(nn.Module):
+# i belive the pooling like this causes a uniform distribution of squares of cutsize
+# Nerdy
+class MakeCutoutsNerdy(nn.Module):
     def __init__(self, cut_size, cutn, cut_pow=1., augments=[]):
         super().__init__()
         self.cut_size = cut_size
@@ -220,47 +223,9 @@ class MakeCutouts(nn.Module):
             batch = batch + facs * torch.randn_like(batch)
         return batch
 
-
-# An updated version with Kornia augments and pooling (where my version started):
-class MakeCutoutsPoolingUpdate(nn.Module):
-    def __init__(self, cut_size, cutn, cut_pow=1., augments=[]):
-        super().__init__()
-        self.cut_size = cut_size
-        self.cutn = cutn
-        self.cut_pow = cut_pow # Not used with pooling
-
-        self.augs = nn.Sequential(
-            K.RandomAffine(degrees=15, translate=0.1, p=0.7, padding_mode='border'),
-            K.RandomPerspective(0.7,p=0.7),
-            K.ColorJitter(hue=0.1, saturation=0.1, p=0.7),
-            K.RandomErasing((.1, .4), (.3, 1/.3), same_on_batch=True, p=0.7),            
-        )
-        
-        self.noise_fac = 0.1
-        self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
-        self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
-
-    @autocast(enabled=use_mixed_precision)
-    def forward(self, input):
-        sideY, sideX = input.shape[2:4]
-        max_size = min(sideX, sideY)
-        min_size = min(sideX, sideY, self.cut_size)
-        cutouts = []
-        
-        for _ in range(self.cutn):
-            cutout = (self.av_pool(input) + self.max_pool(input))/2
-            cutouts.append(cutout)
-            
-        batch = self.augs(torch.cat(cutouts, dim=0))
-        
-        if self.noise_fac:
-            facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
-            batch = batch + facs * torch.randn_like(batch)
-        return batch
-
-
 # An Nerdy updated version with selectable Kornia augments, but no pooling:
-class MakeCutoutsNRUpdate(nn.Module):
+# nerdyNoPool
+class MakeCutoutsNerdyNoPool(nn.Module):
     def __init__(self, cut_size, cutn, cut_pow=1., augments=[]):
         super().__init__()
         self.cut_size = cut_size
@@ -315,42 +280,8 @@ class MakeCutoutsNRUpdate(nn.Module):
         return batch
 
 
-# An updated version with Kornia augments, but no pooling:
-class MakeCutoutsUpdate(nn.Module):
-    def __init__(self, cut_size, cutn, cut_pow=1., augments=[]):
-        super().__init__()
-        self.cut_size = cut_size
-        self.cutn = cutn
-        self.cut_pow = cut_pow
-        self.augs = nn.Sequential(
-            K.RandomHorizontalFlip(p=0.5),
-            K.ColorJitter(hue=0.01, saturation=0.01, p=0.7),
-            # K.RandomSolarize(0.01, 0.01, p=0.7),
-            K.RandomSharpness(0.3,p=0.4),
-            K.RandomAffine(degrees=30, translate=0.1, p=0.8, padding_mode='border'),
-            K.RandomPerspective(0.2,p=0.4),)
-        self.noise_fac = 0.1
-
-    @autocast(enabled=use_mixed_precision)
-    def forward(self, input):
-        sideY, sideX = input.shape[2:4]
-        max_size = min(sideX, sideY)
-        min_size = min(sideX, sideY, self.cut_size)
-        cutouts = []
-        for _ in range(self.cutn):
-            size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
-            offsetx = torch.randint(0, sideX - size + 1, ())
-            offsety = torch.randint(0, sideY - size + 1, ())
-            cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
-            cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
-        batch = self.augs(torch.cat(cutouts, dim=0))
-        if self.noise_fac:
-            facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
-            batch = batch + facs * torch.randn_like(batch)
-        return batch
-
-
 # This is the original version (No pooling)
+# original
 class MakeCutoutsOrig(nn.Module):
     def __init__(self, cut_size, cutn, cut_pow=1., augments=[]):
         super().__init__()

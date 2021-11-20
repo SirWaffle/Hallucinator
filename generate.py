@@ -29,7 +29,7 @@ import numpy as np
 
 
 # shut off tqdm log spam by uncommenting the below
-# from tqdm import tqdm
+from tqdm import tqdm
 # from functools import partialmethod
 # tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
@@ -107,10 +107,10 @@ def log_torch_mem():
     r = torch.cuda.memory_reserved(0)
     a = torch.cuda.memory_allocated(0)
     f = r-a  # free inside reserved
-    print("total mem:       " + str(t))
-    print("reserved mem:    " + str(r))
-    print("allocated mem:   " + str(a))
-    print("free mem:        " + str(f))
+    print("total     VRAM:  " + str(t))
+    print("reserved  VRAM:  " + str(r))
+    print("allocated VRAM:  " + str(a))
+    print("free      VRAM:  " + str(f))
 
 def build_filename_path( filename ):
     fullpath = cmdLineArgs.args.output_dir
@@ -141,6 +141,44 @@ def get_opt(opt_name, opt_lr):
         print("Unknown optimiser. Are choices broken?")
         opt = optim.Adam([quantizedImage], lr=opt_lr)
     return opt
+
+
+
+
+# TODO: make things parameters, at lest for now its easier to deal with here
+def GetMakeCutouts( clipPerceptorInputResolution ):
+    # Cutout class options:
+    # 'squish', 'latest','original','updated' or 'updatedpooling'
+    if cmdLineArgs.args.cut_method == 'latest':
+        cmdLineArgs.args.cut_method = "nerdy"
+
+    if cmdLineArgs.args.cut_method == 'squish':
+        cutSize = cmdLineArgs.args.cut_size
+        if cutSize[0] == 0:
+            cutSize[0] = clipPerceptorInputResolution
+
+        if cutSize[1] == 0:
+            cutSize[1] = clipPerceptorInputResolution        
+
+        print("Squish Cutouts using: cutSize " + str(cutSize))
+
+        # pooling requires proper matching sizes for now
+        if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
+            make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
+        else:
+            make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
+
+    elif cmdLineArgs.args.cut_method == 'original':
+        make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
+    elif cmdLineArgs.args.cut_method == 'nerdy':
+        make_cutouts = makeCutouts.MakeCutoutsNerdy(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
+    elif cmdLineArgs.args.cut_method == 'nerdyNoPool':
+        make_cutouts = makeCutouts.MakeCutoutsNerdyNoPool(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
+    else:
+        print("Bad cut method selected")
+
+    return make_cutouts
+
 
 
 
@@ -331,8 +369,7 @@ def checkin(i, losses, out):
     #gc.collect()
 
 
-def ascend_txt(out):
-    global iteration
+def ascend_txt(iteration, out):
     with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
 
         cutouts = make_cutouts(out)
@@ -365,26 +402,31 @@ def train(i):
         
         out = synth(quantizedImage) 
         
-        lossAll = ascend_txt(out)
-
-        if i % cmdLineArgs.args.display_freq == 0:
-            checkin(i, lossAll, out)  
-
-        if i % cmdLineArgs.args.save_freq == 0:          
-            info = PngImagePlugin.PngInfo()
-            info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            TF.to_pil_image(out[0].cpu()).save( build_filename_path( str(i).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
-            
+        lossAll = ascend_txt(i, out)
         loss = sum(lossAll)
-        lossAvg = loss / len(lossAll)
 
+        # stat updates and progress images
         with torch.inference_mode():
-            if cmdLineArgs.args.save_best == True and bestErrorScore > lossAvg.item():
-                print("saving image for best error: " + str(lossAvg.item()))
-                bestErrorScore = lossAvg
+            if i % cmdLineArgs.args.display_freq == 0:
+                checkin(i, lossAll, out)  
+
+            if i % cmdLineArgs.args.save_freq == 0:          
                 info = PngImagePlugin.PngInfo()
                 info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-                TF.to_pil_image(out[0].cpu()).save( build_filename_path( "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
+                TF.to_pil_image(out[0].cpu()).save( build_filename_path( str(i).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
+                               
+            if cmdLineArgs.args.save_best == True:
+
+                lossAvg = loss / len(lossAll)
+
+                if bestErrorScore > lossAvg.item():
+                    print("saving image for best error: " + str(lossAvg.item()))
+                    bestErrorScore = lossAvg
+                    info = PngImagePlugin.PngInfo()
+                    info.add_text('comment', f'{cmdLineArgs.args.prompts}')
+                    TF.to_pil_image(out[0].cpu()).save( build_filename_path( "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
+
+
 
         if cmdLineArgs.args.optimiser == "MADGRAD":
             loss_idx.append(loss.item())
@@ -403,7 +445,6 @@ def train(i):
             scaler.step(opt)
             scaler.update()
         
-        #with torch.no_grad():
         with torch.inference_mode():
             quantizedImage.copy_(quantizedImage.maximum(z_min).minimum(z_max))
 
@@ -416,11 +457,21 @@ def train(i):
 
 
 ###########################################################
-# start actually doing stuff here.... process cmd line args
+# start actually doing stuff here.... process cmd line args and run
 # #########################################################
+
+
+
+
 print("Args: " + str(cmdLineArgs.args) )
+
+
+if cmdLineArgs.args.convert_to_json_cmd:
+    print("json command conversion mode should be finished, exiting")
+    sys.exit()
+
 print("Using pyTorch: " + str( torch.__version__) )
-print( "Using mixed precision: " + str(cmdLineArgs.args.use_mixed_precision) )  
+print("Using mixed precision: " + str(cmdLineArgs.args.use_mixed_precision) )  
 
 if cmdLineArgs.args.seed is None:
     seed = torch.seed()
@@ -566,35 +617,8 @@ print("Toks X,Y: " + str(toksX) + ", " + str(toksY) + "      SizeX,Y: " + str(si
 # cliperceptor input_res: 224 and whatever f is supposed to be: 16
 # Toks X,Y: 75, 75      SizeX,Y: 1200 1200
 
-# Cutout class options:
-# 'squish', 'latest','original','updated' or 'updatedpooling'
-if cmdLineArgs.args.cut_method == 'latest':
-    make_cutouts = makeCutouts.MakeCutouts(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
-elif cmdLineArgs.args.cut_method == 'squish':
-    cutSize = cmdLineArgs.args.cut_size
-    if cutSize[0] == 0:
-        cutSize[0] = clipPerceptorInputResolution
 
-    if cutSize[1] == 0:
-        cutSize[1] = clipPerceptorInputResolution        
-
-    print("Squish Cutouts using: cutSize " + str(cutSize))
-
-    # pooling requires proper matching sizes for now
-    if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
-        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
-    else:
-        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
-
-elif cmdLineArgs.args.cut_method == 'original':
-    make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
-elif cmdLineArgs.args.cut_method == 'updated':
-    make_cutouts = makeCutouts.MakeCutoutsUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
-elif cmdLineArgs.args.cut_method == 'nrupdated':
-    make_cutouts = makeCutouts.MakeCutoutsNRUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
-else:
-    make_cutouts = makeCutouts.MakeCutoutsPoolingUpdate(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)    
-
+make_cutouts = GetMakeCutouts( clipPerceptorInputResolution )
 
 
 # Gumbel or not?
@@ -643,16 +667,18 @@ else:
     #z = torch.rand_like(z)*2						# NR: check
 
 
-z_orig = quantizedImage.clone()
-z_orig.requires_grad_(False)
+if cmdLineArgs.args.init_weight:
+    z_orig = quantizedImage.clone()
+    z_orig.requires_grad_(False)
 
 quantizedImage.requires_grad_(True)
 
 # write out the input noise...
-out = synth(z_orig)
+out = synth(quantizedImage)
 info = PngImagePlugin.PngInfo()
 info.add_text('comment', f'{cmdLineArgs.args.prompts}')
 TF.to_pil_image(out[0].cpu()).save( build_filename_path( str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
+del out
 
 pMs = []
 normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],

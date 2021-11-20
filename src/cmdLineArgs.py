@@ -46,7 +46,7 @@ def init():
     vq_parser.add_argument("-d",    "--deterministic", type=int, default=1, help="Determinism: 0 ( none ), 1 ( some, default ), 2 ( as much as possible )", dest='deterministic')
 
     # cuts and pooling
-    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','updated','nrupdated','updatedpooling','latest', 'squish'], default='latest', dest='cut_method')
+    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','nerdyNoPool','nerdy','squish','latest'], default='latest', dest='cut_method')
     vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
     vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
 
@@ -81,7 +81,9 @@ def init():
     #allow configs from json files / save to json file for later preservation
     vq_parser.add_argument('--save_json', help='Save settings to file in json format. Ignored in json file')
     vq_parser.add_argument('--save_json_strip_defaults', action='store_true', help='remove default / unset settings when saving config')
+    vq_parser.add_argument('--save_json_strip_misc', action='store_true', help='remove misc settings when saving config to use as a command')
     vq_parser.add_argument('--load_json', help='Load settings from file in json format. Command line options override values in file.')
+    vq_parser.add_argument('--convert_to_json_cmd', action='store_true', help='only load/save back to json for use as a cmd')
 
 
 
@@ -109,7 +111,10 @@ def init():
         # strip out the save/load json params
         inputArgs.pop("save_json", None)
         inputArgs.pop("load_json", None)
-        inputArgs.pop("save_json_strip_defaults", None)
+        inputArgs.pop("save_json_strip_defaults", None)       
+        inputArgs.pop("save_json_strip_misc", None)
+        inputArgs.pop("convert_to_json_cmd", None)
+
 
         if args.save_json_strip_defaults:
             # lets try to strip out all default options that are the same (since versionc hanges may change defaults)            
@@ -117,6 +122,21 @@ def init():
         
             # generate output dictionary
             inputArgs = {key:val for key, val in inputArgs.items() if not key in defaultArgs or defaultArgs[key] != val}
+
+
+        if args.save_json_strip_misc:
+            #pull out user specific stuff here, so we can make a command
+            inputArgs.pop("prompts", None)
+            inputArgs.pop("seed", None)
+            inputArgs.pop("image_prompts", None)
+            inputArgs.pop("stats_every", None)
+            inputArgs.pop("output_dir", None)
+            inputArgs.pop("output", None)
+            inputArgs.pop("save_every", None)
+            inputArgs.pop("save_best", None)
+            inputArgs.pop("anomalyChecker", None)
+            inputArgs.pop("logMem", None)
+            inputArgs.pop("logClipProbabilities", None)            
 
         with open(args.save_json, 'wt') as f:
             json.dump(inputArgs, f, indent=4)

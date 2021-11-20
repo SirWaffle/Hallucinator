@@ -12,7 +12,7 @@ import kornia.augmentation as K
 # hack to manage mixed_precision
 # set from generate based on cmd args
 use_mixed_precision = False
-
+deterministic = False
 
 
 class ClampWithGrad(torch.autograd.Function):
@@ -54,26 +54,37 @@ def ramp(ratio, width):
     return torch.cat([-out[1:].flip([0]), out])[1:-1]
 
 # Used in older MakeCutouts
+# resample is non-deterministic due to interpolate bicubic
+# F.pad is non determinsitic...
 def resample(input, sizeYX, align_corners=True):
     n, c, h, w = input.shape
     dh, dw = sizeYX
 
     input = input.view([n * c, 1, h, w])
 
-    if dh < h:
-        kernel_h = lanczos(ramp(dh / h, 2), 2).to(input.device, input.dtype)
-        pad_h = (kernel_h.shape[0] - 1) // 2
-        input = F.pad(input, (0, 0, pad_h, pad_h), 'reflect')
-        input = F.conv2d(input, kernel_h[None, None, :, None])
+    #if deterministic:
+        # maybe theres nothing to do here, maybe interpolate will fix it all...
+    if not deterministic:
+        if dh < h:
+            kernel_h = lanczos(ramp(dh / h, 2), 2).to(input.device, input.dtype)
+            pad_h = (kernel_h.shape[0] - 1) // 2
+            input = F.pad(input, (0, 0, pad_h, pad_h), 'reflect')
+            input = F.conv2d(input, kernel_h[None, None, :, None])
 
-    if dw < w:
-        kernel_w = lanczos(ramp(dw / w, 2), 2).to(input.device, input.dtype)
-        pad_w = (kernel_w.shape[0] - 1) // 2
-        input = F.pad(input, (pad_w, pad_w, 0, 0), 'reflect')
-        input = F.conv2d(input, kernel_w[None, None, None, :])
+        if dw < w:
+            kernel_w = lanczos(ramp(dw / w, 2), 2).to(input.device, input.dtype)
+            pad_w = (kernel_w.shape[0] - 1) // 2
+            input = F.pad(input, (pad_w, pad_w, 0, 0), 'reflect')
+            input = F.conv2d(input, kernel_w[None, None, None, :])
 
     input = input.view([n, c, h, w])
-    return F.interpolate(input, sizeYX, mode='bicubic', align_corners=align_corners)
+
+    if deterministic:
+        #docs claim nearest and area are deterministic
+        return F.interpolate(input, sizeYX, mode='nearest') #align corners ahs to be false for linear due to some issues
+    else:
+        return F.interpolate(input, sizeYX, mode='bicubic', align_corners=align_corners)    
+    
 
 
 def setupAugmentList(augments, cut_size_x, cut_size_y):
@@ -105,12 +116,16 @@ def setupAugmentList(augments, cut_size_x, cut_size_y):
                 augment_list.append(K.RandomResizedCrop(size=(cut_size_x,cut_size_y), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5))
 
     print("augment list: " + str(augment_list))
-    return nn.Sequential(*augment_list)    
+    return nn.Sequential(*augment_list)   
+
+
+
+
+ 
 
 
 
 # modifiable pool / combo with original to create more detail in larger images
-# pooled versions cap out at cut_size blocks, causing high res images to look low res
 # no idea what im doing, still learning, but this looked cool enough to me on images > 1200x1200
 class MakeCutoutsSquish(nn.Module):
     def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
@@ -129,8 +144,6 @@ class MakeCutoutsSquish(nn.Module):
         # self.noise_fac = False
 
         # Pooling
-        #self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size_y, self.cut_size_x))
-        #self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size_y, self.cut_size_x))
         self.av_pool = nn.AdaptiveAvgPool2d((self.clipRes, self.clipRes))
         self.max_pool = nn.AdaptiveMaxPool2d((self.clipRes, self.clipRes))
 
@@ -173,6 +186,8 @@ class MakeCutoutsSquish(nn.Module):
 
 
 #latest make cutouts this came with - works well on images <= 600x600 ish
+# i belive the pooling like this causes a uniform distribution of squares of
+# cutsize
 class MakeCutouts(nn.Module):
     def __init__(self, cut_size, cutn, cut_pow=1., augments=[]):
         super().__init__()

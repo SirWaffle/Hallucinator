@@ -23,11 +23,15 @@
 # - output is no longer deterministic as of updating to pytorch 1.10 and whatever other libs updated with it
 
 import sys
+import os
+import random
+import numpy as np
+
 
 # shut off tqdm log spam by uncommenting the below
-from tqdm import tqdm
-from functools import partialmethod
-tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
+# from tqdm import tqdm
+# from functools import partialmethod
+# tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
 
 
@@ -43,16 +47,7 @@ makeCutouts.use_mixed_precision = cmdLineArgs.args.use_mixed_precision
 from src import imageUtils
 
 
-
-
-import yaml
-import random
-from urllib.request import urlopen
-import os
-import gc
-
-from omegaconf import OmegaConf
-
+#stuff im using from source instead of installs
 # i want to run clip from source, not an install. I have clip in a dir alongside this project
 # so i append the parent dir to the proj and we expect to find a folder named clip there
 sys.path.append('..\\')
@@ -63,7 +58,14 @@ from CLIP import clip
 # appending the path does work with Gumbel, but gives ModuleNotFoundError: No module named 'transformers' for coco etc
 sys.path.append('taming-transformers')
 from taming.models import cond_transformer, vqgan
-#import taming.modules 
+
+
+
+import yaml
+from urllib.request import urlopen
+import gc
+
+from omegaconf import OmegaConf
 
 import torch
 from torch.cuda.amp import autocast
@@ -78,7 +80,6 @@ from torch.cuda import get_device_properties
 
 import torch_optimizer
 
-import numpy as np
 import imageio
 
 from PIL import ImageFile, Image, PngImagePlugin, ImageChops
@@ -90,6 +91,17 @@ import re
 from torchvision.datasets import CIFAR100
 
 
+
+
+
+def seed_torch(seed=42):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
+
 def log_torch_mem():
     t = torch.cuda.get_device_properties(0).total_memory
     r = torch.cuda.memory_reserved(0)
@@ -99,14 +111,6 @@ def log_torch_mem():
     print("reserved mem:    " + str(r))
     print("allocated mem:   " + str(a))
     print("free mem:        " + str(f))
-
-def seed_torch(seed=42):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed % (2**32 - 1))
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
 
 def build_filename_path( filename ):
     fullpath = cmdLineArgs.args.output_dir
@@ -118,24 +122,24 @@ def build_filename_path( filename ):
 # Set the optimiser
 def get_opt(opt_name, opt_lr):
     if opt_name == "Adam":
-        opt = optim.Adam([z], lr=opt_lr)	# LR=0.1 (Default)
+        opt = optim.Adam([quantizedImage], lr=opt_lr)	# LR=0.1 (Default)
     elif opt_name == "AdamW":
-        opt = optim.AdamW([z], lr=opt_lr)	
+        opt = optim.AdamW([quantizedImage], lr=opt_lr)	
     elif opt_name == "Adagrad":
-        opt = optim.Adagrad([z], lr=opt_lr)	
+        opt = optim.Adagrad([quantizedImage], lr=opt_lr)	
     elif opt_name == "Adamax":
-        opt = optim.Adamax([z], lr=opt_lr)	
+        opt = optim.Adamax([quantizedImage], lr=opt_lr)	
     elif opt_name == "DiffGrad":
-        opt = torch_optimizer.DiffGrad([z], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
+        opt = torch_optimizer.DiffGrad([quantizedImage], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
     elif opt_name == "AdamP":
-        opt = torch_optimizer.AdamP([z], lr=opt_lr)		    	    
+        opt = torch_optimizer.AdamP([quantizedImage], lr=opt_lr)		    	    
     elif opt_name == "RMSprop":
-        opt = optim.RMSprop([z], lr=opt_lr)
+        opt = optim.RMSprop([quantizedImage], lr=opt_lr)
     elif opt_name == "MADGRAD":
-        opt = torch_optimizer.MADGRAD([z], lr=opt_lr)      
+        opt = torch_optimizer.MADGRAD([quantizedImage], lr=opt_lr)      
     else:
         print("Unknown optimiser. Are choices broken?")
-        opt = optim.Adam([z], lr=opt_lr)
+        opt = optim.Adam([quantizedImage], lr=opt_lr)
     return opt
 
 
@@ -156,7 +160,7 @@ class ReplaceGrad(torch.autograd.Function):
 replace_grad = ReplaceGrad.apply
 
 
-
+#@torch.inference_mode() -> gets error on backward loss that tensor has grad disabled
 def vector_quantize(x, codebook):
     d = x.pow(2).sum(dim=-1, keepdim=True) + codebook.pow(2).sum(dim=1) - 2 * x @ codebook.T
     indices = d.argmin(-1)
@@ -235,14 +239,12 @@ def WriteLogClipResults(imgout):
 
     if cmdLineArgs.args.log_clip_oneshot:
         #one shot identification
-        with torch.no_grad():        
-            image_features = clipPerceptor.encode_image(img).float()
+        image_features = clipPerceptor.encode_image(img).float()
 
         text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
         
-        with torch.no_grad():
-            text_features = clipPerceptor.encode_text(text_inputs).float()
-            text_features /= text_features.norm(dim=-1, keepdim=True)
+        text_features = clipPerceptor.encode_text(text_inputs).float()
+        text_features /= text_features.norm(dim=-1, keepdim=True)
 
         # Pick the top 5 most similar labels for the image
         image_features /= image_features.norm(dim=-1, keepdim=True)
@@ -276,10 +278,9 @@ def WriteLogClipResults(imgout):
         #text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
         text_inputs = torch.cat(textins).to(clipDevice)
         
-        with torch.no_grad():
-            image_features = clipPerceptor.encode_image(img).float()
-            text_features = clipPerceptor.encode_text(text_inputs).float()
-            text_features /= text_features.norm(dim=-1, keepdim=True)
+        image_features = clipPerceptor.encode_image(img).float()
+        text_features = clipPerceptor.encode_text(text_inputs).float()
+        text_features /= text_features.norm(dim=-1, keepdim=True)
 
         # Pick the top 5 most similar labels for the image
         image_features /= image_features.norm(dim=-1, keepdim=True)
@@ -329,22 +330,23 @@ def checkin(i, losses, out):
 
     #gc.collect()
 
-def ascend_txt(out):
 
+def ascend_txt(out):
     global iteration
     with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
 
-        if clipDevice != vqganDevice:
-            iii = clipPerceptor.encode_image(normalize(make_cutouts(out).to(clipDevice))).float()
-        else:
-            iii = clipPerceptor.encode_image(normalize(make_cutouts(out))).float()
+        cutouts = make_cutouts(out)
 
-        
-        result = []
+        if clipDevice != vqganDevice:
+            iii = clipPerceptor.encode_image(normalize(cutouts.to(clipDevice))).float()
+        else:
+            iii = clipPerceptor.encode_image(normalize(cutouts)).float()
+
+        result = []        
 
         if cmdLineArgs.args.init_weight:
             # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
-            result.append(F.mse_loss(z, torch.zeros_like(z_orig)) * ((1/torch.tensor(iteration*2 + 1))*cmdLineArgs.args.init_weight) / 2)
+            result.append(F.mse_loss(quantizedImage, torch.zeros_like(z_orig)) * ((1/torch.tensor(iteration*2 + 1))*cmdLineArgs.args.init_weight) / 2)
 
         for prompt in pMs:
             result.append(prompt(iii))
@@ -361,10 +363,10 @@ def train(i):
     with torch.cuda.amp.autocast(cmdLineArgs.args.use_mixed_precision):
         opt.zero_grad(set_to_none=True)
         
-        out = synth(z) 
+        out = synth(quantizedImage) 
         
         lossAll = ascend_txt(out)
-        
+
         if i % cmdLineArgs.args.display_freq == 0:
             checkin(i, lossAll, out)  
 
@@ -376,12 +378,13 @@ def train(i):
         loss = sum(lossAll)
         lossAvg = loss / len(lossAll)
 
-        if cmdLineArgs.args.save_best == True and bestErrorScore > lossAvg.item():
-            print("saving image for best error: " + str(lossAvg.item()))
-            bestErrorScore = lossAvg
-            info = PngImagePlugin.PngInfo()
-            info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            TF.to_pil_image(out[0].cpu()).save( build_filename_path( "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
+        with torch.inference_mode():
+            if cmdLineArgs.args.save_best == True and bestErrorScore > lossAvg.item():
+                print("saving image for best error: " + str(lossAvg.item()))
+                bestErrorScore = lossAvg
+                info = PngImagePlugin.PngInfo()
+                info.add_text('comment', f'{cmdLineArgs.args.prompts}')
+                TF.to_pil_image(out[0].cpu()).save( build_filename_path( "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
 
         if cmdLineArgs.args.optimiser == "MADGRAD":
             loss_idx.append(loss.item())
@@ -393,16 +396,16 @@ def train(i):
             scheduler.step(avg_loss)
         
         if cmdLineArgs.args.use_mixed_precision == False:
-            loss.backward(retain_graph=False) # TODO: had to retain graph due to error calling backwards twice with pytorch 1.10.0, need to figure this out, bad
+            loss.backward()
             opt.step()
         else:
-            scaler.scale(loss).backward(retain_graph=False) # TODO: had to retain graph due to error calling backwards twice with pytorch 1.10.0, need to figure this out, bad
+            scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
         
         #with torch.no_grad():
         with torch.inference_mode():
-            z.copy_(z.maximum(z_min).minimum(z_max))
+            quantizedImage.copy_(quantizedImage.maximum(z_min).minimum(z_max))
 
 
 
@@ -415,6 +418,10 @@ def train(i):
 ###########################################################
 # start actually doing stuff here.... process cmd line args
 # #########################################################
+print("Args: " + str(cmdLineArgs.args) )
+print("Using pyTorch: " + str( torch.__version__) )
+print( "Using mixed precision: " + str(cmdLineArgs.args.use_mixed_precision) )  
+
 if cmdLineArgs.args.seed is None:
     seed = torch.seed()
 else:
@@ -423,9 +430,39 @@ else:
 print('Using seed:', seed)
 seed_torch(seed)
 
-print("Args: " + str(cmdLineArgs.args) )
+if cmdLineArgs.args.deterministic >= 2:
+    print("Determinism at max: forcing a lot of things so this will work, no augs, non-pooling cut method, bad resampling")
+    cmdLineArgs.args.augments = "none"
+    cmdLineArgs.args.cut_method = "original"
 
-print("Using pyTorch: " + str( torch.__version__) )
+    # need to make cutouts use deterministic stuff... probably not a good way
+    makeCutouts.deterministic = True
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False # NR: True is a bit faster, but can lead to OOM. False is more deterministic.
+
+    torch.use_deterministic_algorithms(True)	   # NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation   
+
+    # CUBLAS determinism:
+    # Deterministic behavior was enabled with either `torch.use_deterministic_algorithms(True)` or `at::Context::setDeterministicAlgorithms(true)`, 
+    # but this operation is not deterministic because it uses CuBLAS and you have CUDA >= 10.2. To enable deterministic behavior in this case, 
+    # you must set an environment variable before running your PyTorch application: CUBLAS_WORKSPACE_CONFIG=:4096:8 or CUBLAS_WORKSPACE_CONFIG=:16:8. 
+    # For more information, go to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility  
+    #   
+    # set a debug environment variable CUBLAS_WORKSPACE_CONFIG to ":16:8" (may limit overall performance) or ":4096:8" (will increase library footprint in GPU memory by approximately 24MiB).
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+    #EXPORT CUBLAS_WORKSPACE_CONFIG=:4096:8
+
+    # from nightly build for 1.11 -> 0 no warn, 1 warn, 2 error
+    # torch.set_deterministic_debug_mode(2)
+elif cmdLineArgs.args.deterministic == 1:
+    print("Determinism at medium: cudnn determinism and benchmark disabled")
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False # NR: True is a bit faster, but can lead to OOM. False is more deterministic.
+else:
+    print("Determinism at minimum: cudnn benchmark on")
+    torch.backends.cudnn.benchmark = True #apparently slightly faster, but less deterministic
+
 
 os.makedirs(os.path.dirname(cmdLineArgs.args.output_dir), exist_ok=True)
 
@@ -433,32 +470,13 @@ if cmdLineArgs.args.log_clip:
     print("logging clip probabilities at end, loading vocab stuff")
     cifar100 = CIFAR100(root=".", download=True, train=False)
 
-print( "Using mixed precision: " + str(cmdLineArgs.args.use_mixed_precision) )  
-
 if not cmdLineArgs.args.prompts and not cmdLineArgs.args.image_prompts:
     cmdLineArgs.args.prompts = "A cute, smiling, Nerdy Rodent"
-
-if cmdLineArgs.args.cudnn_determinism:
-   torch.backends.cudnn.deterministic = True
-   torch.backends.cudnn.benchmark = False # NR: True is a bit faster, but can lead to OOM. False is more deterministic.
-   #torch.use_deterministic_algorithms(True)	   # NR: grid_sampler_2d_backward_cuda does not have a deterministic implementation   
-
-   # CUBLAS determinism:
-   # Deterministic behavior was enabled with either `torch.use_deterministic_algorithms(True)` or `at::Context::setDeterministicAlgorithms(true)`, 
-   # but this operation is not deterministic because it uses CuBLAS and you have CUDA >= 10.2. To enable deterministic behavior in this case, 
-   # you must set an environment variable before running your PyTorch application: CUBLAS_WORKSPACE_CONFIG=:4096:8 or CUBLAS_WORKSPACE_CONFIG=:16:8. 
-   # For more information, go to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility  
-   #   
-   # set a debug environment variable CUBLAS_WORKSPACE_CONFIG to ":16:8" (may limit overall performance) or ":4096:8" (will increase library footprint in GPU memory by approximately 24MiB).
-   os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-   #EXPORT CUBLAS_WORKSPACE_CONFIG=:4096:8
-else:
-    torch.backends.cudnn.benchmark = True #apparently slightly faster, but less deterministic
-
 
 if not cmdLineArgs.args.augments:
    cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
 elif cmdLineArgs.args.augments == 'None':
+    print("Augments set to none")
     cmdLineArgs.args.augments = []
 
 if cmdLineArgs.args.use_mixed_precision==True:
@@ -499,11 +517,14 @@ log_torch_mem()
 print("--- / VQGAN model loaded ---")
 
 jit = False
-if [int(n) for n in torch.__version__.split(".")] < [1, 8, 1]:
-    jit = True
+try:
+    # try here, since using nightly build of pytorch has a version scheme like dev23723h
+    if [int(n) for n in torch.__version__.split(".")] < [1, 8, 1]:
+        jit = True
+except:
+    jit = False
 
 print( "available clip models: " + str(clip.available_models() ))
-
 print("CLIP jit: " + str(jit))
 print("using clip model: " + cmdLineArgs.args.clip_model)
 
@@ -545,8 +566,6 @@ print("Toks X,Y: " + str(toksX) + ", " + str(toksY) + "      SizeX,Y: " + str(si
 # cliperceptor input_res: 224 and whatever f is supposed to be: 16
 # Toks X,Y: 75, 75      SizeX,Y: 1200 1200
 
-
-
 # Cutout class options:
 # 'squish', 'latest','original','updated' or 'updatedpooling'
 if cmdLineArgs.args.cut_method == 'latest':
@@ -578,7 +597,6 @@ else:
 
 
 
-
 # Gumbel or not?
 if gumbel:
     e_dim = 256
@@ -600,40 +618,41 @@ if cmdLineArgs.args.init_image:
         pil_image = img.convert('RGB')
         pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
         pil_tensor = TF.to_tensor(pil_image)
-        z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
+        quantizedImage, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 elif cmdLineArgs.args.init_noise == 'pixels':
     img = imageUtils.random_noise_image(cmdLineArgs.args.size[0], cmdLineArgs.args.size[1])    
     pil_image = img.convert('RGB')
     pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
     pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
+    quantizedImage, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 elif cmdLineArgs.args.init_noise == 'gradient':
     img = imageUtils.random_gradient_image(cmdLineArgs.args.size[0], cmdLineArgs.args.size[1])
     pil_image = img.convert('RGB')
     pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
     pil_tensor = TF.to_tensor(pil_image)
-    z, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
+    quantizedImage, *_ = vqganModel.encode(pil_tensor.to(vqganDevice).unsqueeze(0) * 2 - 1)
 else:
     one_hot = F.one_hot(torch.randint(n_toks, [toksY * toksX], device=vqganDevice), n_toks).float()
     # z = one_hot @ vqganModel.quantize.embedding.weight
     if gumbel:
-        z = one_hot @ vqganModel.quantize.embed.weight
+        quantizedImage = one_hot @ vqganModel.quantize.embed.weight
     else:
-        z = one_hot @ vqganModel.quantize.embedding.weight
+        quantizedImage = one_hot @ vqganModel.quantize.embedding.weight
 
-    z = z.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
+    quantizedImage = quantizedImage.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
     #z = torch.rand_like(z)*2						# NR: check
 
-# attempt to write out the input noise...
-out = synth(z)
+
+z_orig = quantizedImage.clone()
+z_orig.requires_grad_(False)
+
+quantizedImage.requires_grad_(True)
+
+# write out the input noise...
+out = synth(z_orig)
 info = PngImagePlugin.PngInfo()
 info.add_text('comment', f'{cmdLineArgs.args.prompts}')
 TF.to_pil_image(out[0].cpu()).save( build_filename_path( str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
-
- 
-z_orig = z.clone()
-
-z.requires_grad_(True)
 
 pMs = []
 normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
@@ -733,7 +752,7 @@ try:
             # Ready to stop yet?
             if iteration == cmdLineArgs.args.max_iterations:
                 # Save final image
-                out = synth(z)                                    
+                out = synth(quantizedImage)                                    
                 img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
                 img = np.transpose(img, (1, 2, 0))
                 imageio.imwrite(build_filename_path(cmdLineArgs.args.output), np.array(img))                

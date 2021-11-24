@@ -3,65 +3,11 @@
 This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. 
 
 
-# Changes to setup instructions:
+# Hallucinator VQGAN+CLIP
 
+I have modified the original readme to reflect my repo - the first readme was well done and obtained from the original fork.
 
-## GIT repo cloning steps
-
-to setup, when following the steps below, when initially cloning the repos, instead of:
-```sh
-git clone 'https://github.com/nerdyrodent/VQGAN-CLIP'
-cd VQGAN-CLIP
-git clone 'https://github.com/openai/CLIP'
-git clone 'https://github.com/CompVis/taming-transformers'
-```
-use:
-```sh
-git clone https://github.com/SirWaffle/VQGAN-CLIP
-cd VQGAN-CLIP
-git clone https://github.com/SirWaffle/taming-transformers
-git clone https://github.com/openai/CLIP
-```
-note: if you dont care about trying mixed precision mode, you dont need to use my fork of taming-transformers
-
-about mixed precision mode:
-if you want to use / mess with running in mixed precision mode, which greatly reduces memory and allows for larger images in less VRAM - i can do 550x500 instead of 400x400 in an 8GB card. The mixed precision mode can be toggled on and off, but I had to add code in the decoder to fix +inf's that caused bad results - mainly i saw these +inf's on my 1070, but not on my 1080, so YMMV. Disclaimer: Correctness of my changes are not garunteed. So far, the results have been pretty poor when using mixed precision, which likely means something was done wrong by me, or theres some more tweaking to be done to get good results.
-
-## additional dependencies
-```sh
-pip install madgrad
-pip install torch-optimizer==0.1.0
-```
-
-torch-optimizer updated and removed some optimisers, as well as added madgrad.... so updates need to be made to support this.
-if you get errors about missing optimizer imports, you may need to check the version of the torch-optimizer, and downgrade to 0.1.0 for now
-
-## quick summary of changes
-- added cmd to put clip model in system memory and use cpu - saves about 900MB ofVRAM, but slows down processing by 7x at least
-
-- fixed some issues with determinism in the runs, now with a seed + the deterministic flag, outcome is deterministic
-
-- added MADGRAD optimizer
-
-- reduced memory in some locations / slight perf increases
-
-- added cmd to add some fun CLIP output, which might not be correct. dumps probabilities of prompts and one shots to console and a file at the end of the run / during stat updates
-
-- added a separate way to log stats to console that doesnt also write files ( for performance reasons )
-
-- added new cmd param to control how often the image files are written
-
-- changed files to be written sequentially instead of overtop the same file
-
-- added cmd to enable mixed precision mode ( requires my modifications to taming transformers or you get a black screen nad an inf/nan party ). Augmentations do not currently work in this, due to float/half type mismatches in the vision library that need to be resolved
-
-- added cmd for debugging purposes, that enabled anomoly checking to assert when infs/nans etc. occur during training
-
-## trouble shooting
-
-- if, like me, you also run on windows, be mindful of the single quotes ( ' ) in the command line stuff, they may need to be changed to " depending on environment and what not
-
-# =============    Original Repo Instructions ===============
+# ==== Instructions ======
 
 A repo for running VQGAN+CLIP locally. This started out as a Katherine Crowson VQGAN+CLIP derived Google colab notebook.
 
@@ -70,22 +16,16 @@ Original notebook: [![Open In Colab][colab-badge]][colab-notebook]
 [colab-notebook]: <https://colab.research.google.com/drive/1ZAus_gn2RhTZWzOWUpPERNC0Q8OhZRTZ>
 [colab-badge]: <https://colab.research.google.com/assets/colab-badge.svg>
 
-Some example images:
-
-<img src="./samples/Cartoon3.png" width="256px"></img><img src="./samples/Cartoon.png" width="256px"></img><img src="./samples/Cartoon2.png" width="256px"></img>
-<img src="./samples/Bedroom.png" width="256px"></img><img src="./samples/DemonBiscuits.png" width="256px"></img><img src="./samples/Football.png" width="256px"></img>
-<img src="./samples/Fractal_Landscape3.png" width="256px"></img><img src="./samples/Games_5.png" width="256px"></img>
 
 Environment:
 
-* Tested on Ubuntu 20.04
-* GPU: Nvidia RTX 3090
+* Tested on Windows 10
+* PyTorch 1.10.0
+* GPUs: Nvidia RTX A6000, 1080 TI, and 1070 Mobile
 * Typical VRAM requirements:
   * 24 GB for a 900x900 image
   * 10 GB for a 512x512 image
   * 8 GB for a 380x380 image
-
-You may also be interested in [CLIP Guided Diffusion](https://github.com/nerdyrodent/CLIP-Guided-Diffusion)
 
 ## Set up
 
@@ -94,17 +34,14 @@ This example uses [Anaconda](https://www.anaconda.com/products/individual#Downlo
 Create a new virtual Python environment for VQGAN-CLIP:
 
 ```sh
-conda create --name vqgan python=3.9
-conda activate vqgan
+conda create --name hallucinator python=3.9
+conda activate hallucinator
 ```
 
 Install Pytorch in the new enviroment:
+<https://pytorch.org/get-started/locally/>
+will generate a command line for you to install the latest pytorch. I use the conda install, but the pip command version should also work
 
-Note: This installs the CUDA version of Pytorch, if you want to use an AMD graphics card, read the [AMD section below](#using-an-amd-graphics-card).
-
-```sh
-pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f https://download.pytorch.org/whl/torch_stable.html
-```
 
 Install other required Python packages:
 
@@ -115,10 +52,10 @@ pip install ftfy regex tqdm omegaconf pytorch-lightning IPython kornia imageio i
 Clone required repositories:
 
 ```sh
-git clone 'https://github.com/nerdyrodent/VQGAN-CLIP'
+git clone "https://github.com/SirWaffle/Hallucinator"
+git clone "https://github.com/SirWaffle/CLIP"
 cd VQGAN-CLIP
-git clone 'https://github.com/openai/CLIP'
-git clone 'https://github.com/CompVis/taming-transformers'
+git clone "https://github.com/SirWaffle/taming-transformers.git"
 ```
 
 Note: In my development environment both CLIP and taming-transformers are present in the local directory, and so aren't present in the `requirements.txt` or `vqgan.yml` files.
@@ -140,24 +77,6 @@ See <https://github.com/CompVis/taming-transformers#overview-of-pretrained-model
 
 By default, the model .yaml and .ckpt files are expected in the `checkpoints` directory.
 See <https://github.com/CompVis/taming-transformers> for more information on datasets and models.
-
-Video guides are also available:
-* Linux - https://www.youtube.com/watch?v=1Esb-ZjO7tw
-* Windows - https://www.youtube.com/watch?v=XH7ZP0__FXs
-
-### Using an AMD graphics card
-
-Note: This hasn't been tested yet.
-
-ROCm can be used for AMD graphics cards instead of CUDA. You can check if your card is supported here:
-<https://github.com/RadeonOpenCompute/ROCm#supported-gpus>
-
-Install ROCm accordng to the instructions and don't forget to add the user to the video group:
-<https://rocmdocs.amd.com/en/latest/Installation_Guide/Installation-Guide.html>
-
-The usage and set up instructions above are the same, except for the line where you install Pytorch.
-Instead of `pip install torch==1.9.0+cu111 ...`, use the one or two lines which are displayed here (select Pip -> Python-> ROCm):
-<https://pytorch.org/get-started/locally/>
 
 ### Using the CPU
 
@@ -182,10 +101,8 @@ and delete the `VQGAN-CLIP` directory.
 To generate images from text, specify your text prompt as shown in the example below:
 
 ```sh
-python generate.py -p "A painting of an apple in a fruit bowl"
+python generate.py --prompt "A painting of an apple in a fruit bowl"
 ```
-
-<img src="./samples/A_painting_of_an_apple_in_a_fruitbowl.png" width="256px"></img>
 
 ## Multiple prompts
 
@@ -193,15 +110,13 @@ Text and image prompts can be split using the pipe symbol in order to allow mult
 You can also use a colon followed by a number to set a weight for that prompt. For example:
 
 ```sh
-python generate.py -p "A painting of an apple in a fruit bowl | psychedelic | surreal:0.5 | weird:0.25"
+python generate.py --prompt "A painting of an apple in a fruit bowl | psychedelic | surreal:0.5 | weird:0.25"
 ```
-
-<img src="./samples/Apple_weird.png" width="256px"></img>
 
 Image prompts can be split in the same way. For example:
 
 ```sh
-python generate.py -p "A picture of a bedroom with a portrait of Van Gogh" -ip "samples/VanGogh.jpg | samples/Bedroom.png"
+python generate.py --prompt "A picture of a bedroom with a portrait of Van Gogh" -ip "samples/VanGogh.jpg | samples/Bedroom.png"
 ```
 
 ### Story mode
@@ -209,7 +124,7 @@ python generate.py -p "A picture of a bedroom with a portrait of Van Gogh" -ip "
 Sets of text prompts can be created using the caret symbol, in order to generate a sort of story mode. For example:
 
 ```sh
-python generate.py -p "A painting of a sunflower|photo:-1 ^ a painting of a rose ^ a painting of a tulip ^ a painting of a daisy flower ^ a photograph of daffodil" -cpe 1500 -zvid -i 6000 -zse 10 -vl 20 -zsc 1.005 -opt Adagrad -lr 0.15 -se 6000
+python generate.py --prompt "A painting of a sunflower|photo:-1 ^ a painting of a rose ^ a painting of a tulip ^ a painting of a daisy flower ^ a photograph of daffodil"
 ```
 
 
@@ -218,42 +133,9 @@ python generate.py -p "A painting of a sunflower|photo:-1 ^ a painting of a rose
 An input image with style text and a low number of iterations can be used create a sort of "style transfer" effect. For example:
 
 ```sh
-python generate.py -p "A painting in the style of Picasso" -ii samples/VanGogh.jpg -i 80 -se 10 -opt AdamW -lr 0.25
+python generate.py --prompt "A painting in the style of Picasso" -ii samples/VanGogh.jpg -i 80 -se 10 -opt AdamW -lr 0.25
 ```
 
-| Output                                                        | Style       |
-| ------------------------------------------------------------- | ----------- |
-| <img src="./samples/vvg_picasso.png" width="256px"></img>     | Picasso     |
-| <img src="./samples/vvg_sketch.png" width="256px"></img>      | Sketch      |
-| <img src="./samples/vvg_psychedelic.png" width="256px"></img> | Psychedelic |
-
-A video style transfer effect can be achived by specifying a directory of video frames in `video_style_dir`. Output will be saved in the steps directory, using the original video frame filenames. You can also use this as a sort of "batch mode" if you have a directory of images you want to apply a style to. This can also be combined with Story Mode if you don't wish to apply the same style to every images, but instead roll through a list of styles.
-
-## Feedback example
-
-By feeding back the generated images and making slight changes, some interesting effects can be created.
-
-The example `zoom.sh` shows this by applying a zoom and rotate to generated images, before feeding them back in again.
-To use `zoom.sh`, specifying a text prompt, output filename and number of frames. E.g.
-
-```sh
-./zoom.sh "A painting of a red telephone box spinning through a time vortex" Telephone.png 150
-```
-
-<img src="./samples/zoom.gif" width="256px"></img>
-
-There is also a simple zoom video creation option available. For example:
-```sh
-python generate.py -p "The inside of a sphere" -zvid -i 4500 -zse 20 -vl 10 -zsc 0.97 -opt Adagrad -lr 0.15 -se 4500
-```
-
-## Random text example
-
-Use `random.sh` to make a batch of images from random text. Edit the text and number of generated images to your taste!
-
-```sh
-./random.sh
-```
 
 ## Advanced options
 
@@ -263,81 +145,7 @@ To view the available options, use "-h".
 python generate.py -h
 ```
 
-```sh
-usage: generate.py [-h] [-p PROMPTS] [-ip IMAGE_PROMPTS] [-i MAX_ITERATIONS] [-se DISPLAY_FREQ]
-[-s SIZE SIZE] [-ii INIT_IMAGE] [-in INIT_NOISE] [-iw INIT_WEIGHT] [-m CLIP_MODEL]
-[-conf VQGAN_CONFIG] [-ckpt VQGAN_CHECKPOINT] [-nps [NOISE_PROMPT_SEEDS ...]]
-[-npw [NOISE_PROMPT_WEIGHTS ...]] [-lr STEP_SIZE] [-cuts CUTN] [-cutp CUT_POW] [-sd SEED]
-[-opt {Adam,AdamW,Adagrad,Adamax,DiffGrad,AdamP,RAdam,RMSprop}] [-o OUTPUT] [-vid] [-zvid]
-[-zs ZOOM_START] [-zse ZOOM_FREQUENCY] [-zsc ZOOM_SCALE] [-cpe PROMPT_FREQUENCY]
-[-vl VIDEO_LENGTH] [-ofps OUTPUT_VIDEO_FPS] [-ifps INPUT_VIDEO_FPS] [-d]
-[-aug {Ji,Sh,Gn,Pe,Ro,Af,Et,Ts,Cr,Er,Re} [{Ji,Sh,Gn,Pe,Ro,Af,Et,Ts,Cr,Er,Re} ...]]
-[-cd CUDA_DEVICE]
-```
-
-```sh
-optional arguments:
-  -h, --help            show this help message and exit
-  -p PROMPTS, --prompts PROMPTS
-                        Text prompts
-  -ip IMAGE_PROMPTS, --image_prompts IMAGE_PROMPTS
-                        Image prompts / target image
-  -i MAX_ITERATIONS, --iterations MAX_ITERATIONS
-                        Number of iterations
-  -se DISPLAY_FREQ, --save_every DISPLAY_FREQ
-                        Save image iterations
-  -s SIZE SIZE, --size SIZE SIZE
-                        Image size (width height) (default: [512, 512])
-  -ii INIT_IMAGE, --init_image INIT_IMAGE
-                        Initial image
-  -in INIT_NOISE, --init_noise INIT_NOISE
-                        Initial noise image (pixels or gradient)
-  -iw INIT_WEIGHT, --init_weight INIT_WEIGHT
-                        Initial weight
-  -m CLIP_MODEL, --clip_model CLIP_MODEL
-                        CLIP model (e.g. ViT-B/32, ViT-B/16)
-  -conf VQGAN_CONFIG, --vqgan_config VQGAN_CONFIG
-                        VQGAN config
-  -ckpt VQGAN_CHECKPOINT, --vqgan_checkpoint VQGAN_CHECKPOINT
-                        VQGAN checkpoint
-  -nps [NOISE_PROMPT_SEEDS ...], --noise_prompt_seeds [NOISE_PROMPT_SEEDS ...]
-                        Noise prompt seeds
-  -npw [NOISE_PROMPT_WEIGHTS ...], --noise_prompt_weights [NOISE_PROMPT_WEIGHTS ...]
-                        Noise prompt weights
-  -lr STEP_SIZE, --learning_rate STEP_SIZE
-                        Learning rate
-  -cuts CUTN, --num_cuts CUTN
-                        Number of cuts
-  -cutp CUT_POW, --cut_power CUT_POW
-                        Cut power
-  -sd SEED, --seed SEED
-                        Seed
-  -opt, --optimiser {Adam,AdamW,Adagrad,Adamax,DiffGrad,AdamP,RAdam,RMSprop}
-                        Optimiser
-  -o OUTPUT, --output OUTPUT
-                        Output file
-  -vid, --video         Create video frames?
-  -zvid, --zoom_video   Create zoom video?
-  -zs ZOOM_START, --zoom_start ZOOM_START
-                        Zoom start iteration
-  -zse ZOOM_FREQUENCY, --zoom_save_every ZOOM_FREQUENCY
-                        Save zoom image iterations
-  -zsc ZOOM_SCALE, --zoom_scale ZOOM_SCALE
-                        Zoom scale
-  -cpe PROMPT_FREQUENCY, --change_prompt_every PROMPT_FREQUENCY
-                        Prompt change frequency
-  -vl VIDEO_LENGTH, --video_length VIDEO_LENGTH
-                        Video length in seconds
-  -ofps OUTPUT_VIDEO_FPS, --output_video_fps OUTPUT_VIDEO_FPS
-                        Create an interpolated video (Nvidia GPU only) with this fps (min 10. best set to 30 or 60)
-  -ifps INPUT_VIDEO_FPS, --input_video_fps INPUT_VIDEO_FPS
-                        When creating an interpolated video, use this as the input fps to interpolate from (>0 & <ofps)
-  -d, --deterministic   Enable cudnn.deterministic?
-  -aug, --augments {Ji,Sh,Gn,Pe,Ro,Af,Et,Ts,Cr,Er,Re} [{Ji,Sh,Gn,Pe,Ro,Af,Et,Ts,Cr,Er,Re} ...]
-                        Enabled augments
-  -cd CUDA_DEVICE, --cuda_device CUDA_DEVICE
-                        Cuda device to use
-```
+you can also view all command line options in the ./src/cmdLineArgs.py file
 
 ## Troubleshooting
 
@@ -381,4 +189,4 @@ Your request doesn't fit into your GPU's VRAM. Reduce the image size and/or numb
 
 Katherine Crowson - <https://github.com/crowsonkb>
 
-Public Domain images from Open Access Images at the Art Institute of Chicago - <https://www.artic.edu/open-access/open-access-images>
+Nerdy Rodent - <https://github.com/nerdyrodent/VQGAN-CLIP>

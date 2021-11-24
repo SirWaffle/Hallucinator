@@ -1,0 +1,11 @@
+{
+    "max_iterations": 200,
+    "size": [
+        400,
+        400
+    ],
+    "vqgan_config": "checkpoints/faceshq.yaml",
+    "vqgan_checkpoint": "checkpoints/faceshq.ckpt",
+    "cut_method": "squish",
+    "cutn": 128
+}

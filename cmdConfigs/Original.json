@@ -1,0 +1,9 @@
+{
+    "max_iterations": 200,
+    "size": [
+        400,
+        400
+    ],
+
+    "cut_method": "original"
+}

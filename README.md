@@ -17,7 +17,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - code refactoring
 - various new commandline options
 - for users with low RAM GPU's desperate to get more resolution, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM
-- ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different genreation techniques
+- ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different generation techniques
 - addition of mixed precision mode to save more memory ( but the output isnt very good yet )
 - more options for where / how often output gets saved and written
 - removal of video generation and image feedback scripts, to reduce clutter while i am learning this system ( i use external tools for this )

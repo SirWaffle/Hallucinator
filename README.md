@@ -1,6 +1,6 @@
 # original VQGAN-CLIP implementation ( forked from nerdyrodent )
 
-many thanks to  <https://github.com/nerdyrodent/VQGAN-CLIP> !
+many thanks to  <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github
 
 
 

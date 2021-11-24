@@ -1,11 +1,36 @@
-# VQGAN-CLIP ( forked from nerdyrodent )
+# original VQGAN-CLIP implementation ( forked from nerdyrodent )
 
-This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. 
+many thanks to  <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github
 
 
-# Hallucinator VQGAN+CLIP
 
+# Hallucinator
 I have modified the original readme to reflect my repo - the first readme was well done and obtained from the original fork.
+
+## Warnings
+-  I am an experienced programmer, but new to python, so my code may be very non-pythonic and weird in many places
+-  I am still learning the basic of ML, so expect hacky test things and weirdness
+-  I am treating this as my own private repo without concerns of anyone that might look at this code, so things may change without warning and with low quality 
+
+## Change list from original repository
+- minor memory usage reductions
+- minor performance improvements
+- code refactoring
+- various new commandline options
+- ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different genreation techniques
+- addition of mixed precision mode to save more memory ( but the output isnt very good yet )
+- more options for where / how often output gets saved and written
+- removal of video generation from scripts to reduce clutter ( i use external tools for this )
+- stats, memory usage logging
+- clip analysis logging which may or may not be correct
+- cut method modifications for higher res images
+
+## roadmap
+- masking to prevent modifications in certain places, masking to provide specific prompts in certain locations
+- integration via plugins to art programs for itneractive generation
+- interactive server mode for a dedicated interactive instance on a local machine
+
+
 
 # ==== Instructions ======
 
@@ -58,7 +83,11 @@ cd VQGAN-CLIP
 git clone "https://github.com/SirWaffle/taming-transformers.git"
 ```
 
-Note: In my development environment both CLIP and taming-transformers are present in the local directory, and so aren't present in the `requirements.txt` or `vqgan.yml` files.
+Notes: 
+- It is not neccessary to use my forks of CLIP or taming-transformers, i only have those to control what changes filter to my project
+- If you want to mess with mixed precision mode for memory savings, you will need my fork of taming-transformers
+- In my development environment taming-transformers is present in the local directory, and so aren't present in the `requirements.txt` or `vqgan.yml` files.
+- In my environment, CLIP sits alongside my project directory, but i use it from source, not install
 
 As an alternative, you can also pip install taming-transformers and CLIP.
 
@@ -91,10 +120,10 @@ This works with the CUDA version of Pytorch, even without CUDA drivers installed
 Remove the Python enviroment:
 
 ```sh
-conda remove --name vqgan --all
+conda remove --name hallucinator --all
 ```
 
-and delete the `VQGAN-CLIP` directory.
+and delete the `hallucinator` directory.
 
 ## Run
 
@@ -139,7 +168,7 @@ python generate.py --prompt "A painting in the style of Picasso" -ii samples/Van
 
 ## Advanced options
 
-To view the available options, use "-h".
+To view the available options, use "-h"
 
 ```sh
 python generate.py -h
@@ -147,23 +176,6 @@ python generate.py -h
 
 you can also view all command line options in the ./src/cmdLineArgs.py file
 
-## Troubleshooting
-
-### CUSOLVER_STATUS_INTERNAL_ERROR
-
-For example:
-
-`RuntimeError: cusolver error: CUSOLVER_STATUS_INTERNAL_ERROR, when calling cusolverDnCreate(handle)`
-
-Make sure you have specified the correct size for the image. For more information please refer to [#6](/issues/6)
-
-### RuntimeError: CUDA out of memory
-
-For example:
-
-`RuntimeError: CUDA out of memory. Tried to allocate 150.00 MiB (GPU 0; 23.70 GiB total capacity; 21.31 GiB already allocated; 78.56 MiB free; 21.70 GiB reserved in total by PyTorch)`
-
-Your request doesn't fit into your GPU's VRAM. Reduce the image size and/or number of cuts.
 
 
 ## Citations

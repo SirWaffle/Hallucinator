@@ -15,6 +15,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 ## Change list from original repository
 - minor memory usage reductions
 - minor performance improvements
+- can now fully generate deterministic images, although its slower and can't be used with pooling and other features
 - code refactoring
 - various new commandline options
 - ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different genreation techniques

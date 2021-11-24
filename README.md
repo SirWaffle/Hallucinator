@@ -1,7 +1,4 @@
-# original VQGAN-CLIP implementation ( forked from nerdyrodent )
-
-many thanks to  <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github. 
-
+many thanks to NErdy Rodent <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github. 
 
 
 # Hallucinator
@@ -19,6 +16,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - can now fully generate deterministic images, although its slower and can't be used with pooling and other features
 - code refactoring
 - various new commandline options
+- for users with low RAM GPU's desperate to get more resoltuion, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM
 - ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different genreation techniques
 - addition of mixed precision mode to save more memory ( but the output isnt very good yet )
 - more options for where / how often output gets saved and written
@@ -46,14 +44,14 @@ Original notebook: [![Open In Colab][colab-badge]][colab-notebook]
 
 
 Environment:
-
-* Tested on Windows 10
-* PyTorch 1.10.0
-* GPUs: Nvidia RTX A6000, 1080 TI, and 1070 Mobile
-* Typical VRAM requirements:
-  * 24 GB for a 900x900 image
-  * 10 GB for a 512x512 image
-  * 8 GB for a 380x380 image
+* Windows 10
+* Miniconda
+* PyTorch 1.10.0 / Cuda 11.3
+* GPUs tested: Nvidia RTX A6000 ( 48 GB ), Nvidia 1080 standard ( 8 GB ), and Nvidia 1070 Mobile ( 8 GB )
+* VRAM requirements for resolutions I have tested:
+  * 48 GB can handle up to 1400 x 1400 full precision
+  * 8 GB for 512 x 512 using mixed precision
+  * 8 GB for 450 x 450 image using full precision
 
 ## Set up
 

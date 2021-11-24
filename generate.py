@@ -152,22 +152,28 @@ def GetMakeCutouts( clipPerceptorInputResolution ):
     if cmdLineArgs.args.cut_method == 'latest':
         cmdLineArgs.args.cut_method = "nerdy"
 
-    if cmdLineArgs.args.cut_method == 'squish':
-        cutSize = cmdLineArgs.args.cut_size
-        if cutSize[0] == 0:
-            cutSize[0] = clipPerceptorInputResolution
+    cutSize = cmdLineArgs.args.cut_size
+    if cutSize[0] == 0:
+        cutSize[0] = clipPerceptorInputResolution
 
-        if cutSize[1] == 0:
-            cutSize[1] = clipPerceptorInputResolution        
+    if cutSize[1] == 0:
+        cutSize[1] = clipPerceptorInputResolution    
 
-        print("Squish Cutouts using: cutSize " + str(cutSize))
+    cutsMatchClip = True 
+    if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
+        cutsMatchClip = False
 
-        # pooling requires proper matching sizes for now
-        if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
-            make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
-        else:
-            make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
+    print("Cutouts method: " + cmdLineArgs.args.cut_method + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
 
+    # used for whatever test cut thing im doing
+    if cmdLineArgs.args.cut_method == 'test':
+        make_cutouts = makeCutouts.MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
+
+
+    elif cmdLineArgs.args.cut_method == 'growFromCenter':
+        make_cutouts = makeCutouts.MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)        
+    elif cmdLineArgs.args.cut_method == 'squish':        
+        make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, use_pool=True, augments=cmdLineArgs.args.augments)
     elif cmdLineArgs.args.cut_method == 'original':
         make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, cmdLineArgs.args.cutn, cut_pow=cmdLineArgs.args.cut_pow, augments=cmdLineArgs.args.augments)
     elif cmdLineArgs.args.cut_method == 'nerdy':

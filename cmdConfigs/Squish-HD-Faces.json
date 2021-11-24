@@ -7,5 +7,5 @@
     "vqgan_config": "checkpoints/faceshq.yaml",
     "vqgan_checkpoint": "checkpoints/faceshq.ckpt",
     "cut_method": "squish",
-    "cutn": 128,
+    "cutn": 128
 }

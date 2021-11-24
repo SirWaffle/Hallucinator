@@ -46,7 +46,7 @@ def init():
     vq_parser.add_argument("-d",    "--deterministic", type=int, default=1, help="Determinism: 0 ( none ), 1 ( some, default ), 2 ( as much as possible )", dest='deterministic')
 
     # cuts and pooling
-    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','nerdyNoPool','nerdy','squish','latest'], default='latest', dest='cut_method')
+    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','nerdyNoPool','nerdy','squish','latest','test','growFromCenter'], default='latest', dest='cut_method')
     vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
     vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
 

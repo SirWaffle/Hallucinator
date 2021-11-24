@@ -4,3 +4,19 @@ pooling method seems to do squares only, and hit a max resolution of size x size
 
 original does a much better job at high resilutions and getting details
 	number of cuts makes a difference here, seems more detail with more cuts. 
+
+
+
+
+
+
+disabling grad on the clip perceptor image encode causes the network to not train
+disabling grad on vectorquantize sets tensor to not having grad enabled
+
+
+
+
+non deterministic:
+adaptive_max_pool2d_backward_cuda  -> used by pooling
+
+upsample_bicubic2d_backward_out_cuda -> where is this from now...

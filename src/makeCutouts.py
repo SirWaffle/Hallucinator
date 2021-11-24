@@ -121,12 +121,6 @@ def setupAugmentList(augments, cut_size_x, cut_size_y):
     return nn.Sequential(*augment_list)   
 
 
-
-
- 
-
-
-
 # modifiable pool / combo with original to create more detail in larger images
 # no idea what im doing, still learning, but this looked cool enough to me on images > 1200x1200
 # squish
@@ -190,7 +184,7 @@ class MakeCutoutsSquish(nn.Module):
 
 #latest make cutouts this came with - works well on images <= 600x600 ish
 # i belive the pooling like this causes a uniform distribution of squares of cutsize
-# Nerdy
+# nerdy
 class MakeCutoutsNerdy(nn.Module):
     def __init__(self, cut_size, cutn, cut_pow=1., augments=[]):
         super().__init__()
@@ -302,3 +296,131 @@ class MakeCutoutsOrig(nn.Module):
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
             cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
         return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##########################################
+### start adding new cutout types here ###
+##########################################
+
+class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
+    def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
+        super().__init__(clipRes, cut_size_x, cut_size_y, cutn, cut_pow, False, augments)
+
+        self.iterations = 0
+
+    @autocast(enabled=use_mixed_precision)
+    def forward(self, input):
+        self.iterations = self.iterations + 1
+
+        # seems to sharpen up everything after a sort of 'layout' is established
+        if self.iterations > 100:
+            return super().forward(input)
+
+        sideY, sideX = input.shape[2:4]
+
+        max_size_x = sideX
+        max_size_y = sideY
+
+        min_size_x = min(sideX, self.cut_size_x)
+        min_size_y = min(sideX, self.cut_size_y)
+
+        midX = max_size_x / 2
+        midY = max_size_y / 2
+
+        step_x = midX / self.cutn
+        step_y = midY / self.cutn
+
+        cutouts = []
+        
+        for i in range(self.cutn):            
+            # create the cut
+            # steps = i + 1
+            steps = int(self.cutn / 2)
+
+            size_x = int(2 * ( step_x * steps ))
+            size_y = int(2 * ( step_y * steps ))
+
+            xpos = int(midX - ( step_x * steps ))
+            ypos = int(midY - ( step_y * steps ))
+
+            cutout = input[:, :, xpos:xpos + size_y, ypos:ypos + size_x]
+
+            # now pool for some reason? dont know what i'm doing but the results are good...
+            if self.use_pool:
+                cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
+                cutouts.append(cutout)
+            else:
+                cutouts.append(resample(cutout, (self.clipRes, self.clipRes)))            
+            
+        batch = self.augs(torch.cat(cutouts, dim=0))
+        
+        if self.noise_fac:
+            facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
+            batch = batch + facs * torch.randn_like(batch)
+        return batch
+
+
+
+
+class MakeCutoutsOneSpot(MakeCutoutsSquish):
+    def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
+        super().__init__(clipRes, cut_size_x, cut_size_y, cutn, cut_pow, False, augments)
+
+        self.iterations = 0
+
+    @autocast(enabled=use_mixed_precision)
+    def forward(self, input):
+        self.iterations = self.iterations + 1
+
+        # seems to sharpen up everything after a sort of 'layout' is established
+        sideY, sideX = input.shape[2:4]
+
+        max_size_x = sideX
+        max_size_y = sideY
+
+        midX = max_size_x / 2
+        midY = max_size_y / 2
+
+        cutouts = []
+
+        size_x = self.clipRes
+        size_y = self.clipRes
+
+        xpos = int(midX - ( size_x / 2 ))
+        ypos = int(midY - ( size_y / 2 ))
+
+        #interesting - one cut still causes the rest of the image to go towards the prompt
+        #but mostly just texturally / abstractly
+        #the cut itself becomes more clearly the prompt
+        #looks cool with styles
+        #cutout = input[:, :, 0:xpos + size_y, ypos:ypos + size_x]
+        cutout = input[:, :, 0:size_y, 0:size_x]
+
+        # now pool for some reason? dont know what i'm doing but the results are good...
+        if self.use_pool:
+            cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
+            cutouts.append(cutout)
+        else:
+            cutouts.append(resample(cutout, (self.clipRes, self.clipRes)))            
+            
+
+
+        batch = self.augs(torch.cat(cutouts, dim=0))
+        
+        if self.noise_fac:
+            facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
+            batch = batch + facs * torch.randn_like(batch)
+        return batch

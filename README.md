@@ -16,7 +16,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - can now generate fully deterministic images, although its slower and can't be used with pooling and other features
 - code refactoring
 - various new commandline options
-- for users with low RAM GPU's desperate to get more resoltuion, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM
+- for users with low RAM GPU's desperate to get more resolution, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM
 - ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different genreation techniques
 - addition of mixed precision mode to save more memory ( but the output isnt very good yet )
 - more options for where / how often output gets saved and written

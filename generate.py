@@ -19,9 +19,6 @@
 # The original BigGAN+CLIP method was by https://twitter.com/advadnoun
 
 
-# TODOS:
-# - output is no longer deterministic as of updating to pytorch 1.10 and whatever other libs updated with it
-
 import sys
 import os
 import random
@@ -35,7 +32,6 @@ from tqdm import tqdm
 
 
 
-# trying to cut down on the absurd mess of a single file ...
 sys.path.append('src')
 
 from src import cmdLineArgs
@@ -55,7 +51,7 @@ from CLIP import clip
 
 
 # pip install taming-transformers doesn't work with Gumbel, but does not yet work with coco etc
-# appending the path does work with Gumbel, but gives ModuleNotFoundError: No module named 'transformers' for coco etc
+# appending the path does work with Gumbel
 sys.path.append('taming-transformers')
 from taming.models import cond_transformer, vqgan
 
@@ -204,7 +200,6 @@ class ReplaceGrad(torch.autograd.Function):
 replace_grad = ReplaceGrad.apply
 
 
-#@torch.inference_mode() -> gets error on backward loss that tensor has grad disabled
 def vector_quantize(x, codebook):
     d = x.pow(2).sum(dim=-1, keepdim=True) + codebook.pow(2).sum(dim=1) - 2 * x @ codebook.T
     indices = d.argmin(-1)
@@ -278,7 +273,6 @@ def synth(z):
 def WriteLogClipResults(imgout):
     #image, class_id = cifar100[3637]
 
-    #out = synth(z) 
     img = normalize(make_cutouts(imgout))
 
     if cmdLineArgs.args.log_clip_oneshot:
@@ -319,7 +313,6 @@ def WriteLogClipResults(imgout):
                     promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2])       
                     textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2]))                    
 
-        #text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in cifar100.classes]).to(clipDevice)
         text_inputs = torch.cat(textins).to(clipDevice)
         
         image_features = clipPerceptor.encode_image(img).float()
@@ -528,7 +521,7 @@ if cmdLineArgs.args.log_clip:
     cifar100 = CIFAR100(root=".", download=True, train=False)
 
 if not cmdLineArgs.args.prompts and not cmdLineArgs.args.image_prompts:
-    cmdLineArgs.args.prompts = "A cute, smiling, Nerdy Rodent"
+    cmdLineArgs.args.prompts = "illustrated waffle, and a SquishBrain"
 
 if not cmdLineArgs.args.augments:
    cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
@@ -587,7 +580,6 @@ print("using clip model: " + cmdLineArgs.args.clip_model)
 
 if cmdLineArgs.args.clip_cpu == False:
     clipDevice = vqganDevice
-    # hmm, updating to latest pytorch complains about .requires_grad being invalid? this works without jit
     if jit == False:
         clipPerceptor = clip.load(cmdLineArgs.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().requires_grad_(False).to(clipDevice)
     else:

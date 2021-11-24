@@ -64,8 +64,6 @@ def resample(input, sizeYX, align_corners=True):
 
     input = input.view([n * c, 1, h, w])
 
-    #if deterministic:
-        # maybe theres nothing to do here, maybe interpolate will fix it all...
     if not deterministic:
         if dh < h:
             kernel_h = lanczos(ramp(dh / h, 2), 2).to(input.device, input.dtype)
@@ -83,7 +81,7 @@ def resample(input, sizeYX, align_corners=True):
 
     if deterministic:
         #docs claim nearest and area are deterministic
-        return F.interpolate(input, sizeYX, mode='nearest') #align corners ahs to be false for linear due to some issues
+        return F.interpolate(input, sizeYX, mode='nearest') #align corners has to be false for linear due to some issues
     else:
         return F.interpolate(input, sizeYX, mode='bicubic', align_corners=align_corners)    
     
@@ -311,9 +309,9 @@ class MakeCutoutsOrig(nn.Module):
 
 
 
-##########################################
-### start adding new cutout types here ###
-##########################################
+####################################################
+### start adding new cutout types and tests here ###
+####################################################
 
 class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
     def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
@@ -358,7 +356,6 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
 
             cutout = input[:, :, xpos:xpos + size_y, ypos:ypos + size_x]
 
-            # now pool for some reason? dont know what i'm doing but the results are good...
             if self.use_pool:
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
                 cutouts.append(cutout)
@@ -374,7 +371,7 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
 
 
 
-
+## test method for masking attempts
 class MakeCutoutsOneSpot(MakeCutoutsSquish):
     def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
         super().__init__(clipRes, cut_size_x, cut_size_y, cutn, cut_pow, False, augments)

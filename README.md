@@ -26,8 +26,9 @@ I have modified the original readme to reflect my repo - the first readme was we
 - cut method modifications for higher res images
 
 ## roadmap
+- masking to prevent modifications in certain places, masking to provide specific prompts in certain locations
 - integration via plugins to art programs for itneractive generation
-- server mode for a dedicated interactive instance on a local machine
+- interactive server mode for a dedicated interactive instance on a local machine
 
 
 

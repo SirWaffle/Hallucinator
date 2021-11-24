@@ -13,7 +13,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - many changes to make this script more friendly when launched from a seperate process ( ie, discord bot )
 - minor memory usage reductions
 - minor performance improvements
-- can now fully generate deterministic images, although its slower and can't be used with pooling and other features
+- can now generate fully deterministic images, although its slower and can't be used with pooling and other features
 - code refactoring
 - various new commandline options
 - for users with low RAM GPU's desperate to get more resoltuion, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM

@@ -1,4 +1,4 @@
-many thanks to NErdy Rodent <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github. 
+many thanks to Nerdy Rodent <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github. 
 
 
 # Hallucinator

@@ -2,7 +2,7 @@ many thanks to Nerdy Rodent <https://github.com/nerdyrodent/VQGAN-CLIP> ! More i
 
 
 # Hallucinator
-I have modified the original readme to reflect my repo - the first readme was well done and obtained from the original fork. I suggest looking over the readme there first (  <https://github.com/nerdyrodent/VQGAN-CLIP> ), since I have removed a lot of what was in the original readme for brevity
+I have modified the original readme to reflect my repo - the first readme was well done and contains much more information than my readme. I suggest looking over the readme there first (  <https://github.com/nerdyrodent/VQGAN-CLIP> ), since I have removed a lot of what was in the original readme for brevity
 
 ## Warnings
 -  I am an experienced programmer, but new to python, so my code may be very non-pythonic and weird in many places

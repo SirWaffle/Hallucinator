@@ -72,7 +72,7 @@ will generate a command line for you to install the latest pytorch. I use the co
 Install other required Python packages:
 
 ```sh
-pip install ftfy regex tqdm omegaconf pytorch-lightning IPython kornia imageio imageio-ffmpeg einops torch_optimizer
+pip install ftfy regex tqdm omegaconf pytorch-lightning IPython kornia imageio imageio-ffmpeg einops torch_optimizer transformers
 ```
 
 Clone required repositories:

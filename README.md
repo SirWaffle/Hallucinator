@@ -1,17 +1,18 @@
 # original VQGAN-CLIP implementation ( forked from nerdyrodent )
 
-This was forked from <https://github.com/nerdyrodent/VQGAN-CLIP>, so that I could tinker with it to my own ends. 
+many thanks to  <https://github.com/nerdyrodent/VQGAN-CLIP> !
+
 
 
 # Hallucinator
 I have modified the original readme to reflect my repo - the first readme was well done and obtained from the original fork.
 
-# Warnings
--  I am still learning python, so my code may be very non-pythonic in many places
--  I am still learning th ebasic of ML
--  I am treating this as my own private repo without concerns of anyone that might look at this code, so things may change wildely 
+## Warnings
+-  I am an experienced programmer, but new to python, so my code may be very non-pythonic and weird in many places
+-  I am still learning the basic of ML, so expect hacky test things and weirdness
+-  I am treating this as my own private repo without concerns of anyone that might look at this code, so things may change without warning and with low quality 
 
-# Change list from original repository
+## Change list from original repository
 - minor memory usage reductions
 - minor performance improvements
 - code refactoring
@@ -23,7 +24,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - clip analysis logging which may or may not be correct
 - cut method modifications for higher res images
 
-# roadmap
+## roadmap
 - integration via plugins to art programs for itneractive generation
 - server mode for a dedicated interactive instance on a local machine
 

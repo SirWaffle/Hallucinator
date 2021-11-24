@@ -17,6 +17,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - minor performance improvements
 - code refactoring
 - various new commandline options
+- ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different genreation techniques
 - addition of mixed precision mode to save more memory ( but the output isnt very good yet )
 - more options for where / how often output gets saved and written
 - removal of video generation from scripts to reduce clutter ( i use external tools for this )

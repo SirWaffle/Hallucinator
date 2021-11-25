@@ -29,7 +29,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - integration of more models and methods for generation
 - masking to prevent modifications in certain places, masking to provide specific prompts in certain locations
 - integration via plugins to art programs for interactive generation
-- interactive server mode for a dedicated interactive instance on a local machine
+- interactive server mode for a dedicated interactive instance on a local/remote machine
 
 
 

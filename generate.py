@@ -61,7 +61,7 @@ def checkin(i, losses, out):
     print("*************************************************")
 
     promptNum = 0
-    if cmdLineArgs.args.prompts:
+    if cmdLineArgs.args.prompts and cmdLineArgs.args.use_spatial_prompts == False:
         for loss in losses:
             print( "----> " + cmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
             promptNum += 1
@@ -146,9 +146,18 @@ elif cmdLineArgs.args.augments == 'None':
     cmdLineArgs.args.augments = []
 
 
+## hacky mask testing shit for now
+cmdLineArgs.args.spatial_prompts=[
+    ( (255,0,0), 0.2, '''a massive, dark, steampunk building filling the picture. a mass of steampunk. gray and black machine.'''),
+    ( (0,255,0), 0.5, '''a beautiful lush tree on a steampunk ledge'''),
+    ( (0,0,255), 0.7, '''a single small sliver of glowing moon in a blue sky'''),
+    ( (0,0,0), 0.9, '''clear skies above. nothing but blue.'''),
+]
 
-
-
+cmdLineArgs.args.append_to_prompts = 'trending on artstation'
+cmdLineArgs.args.prompt_key_image = 'tower-mask.png'
+cmdLineArgs.args.dilate_masks = 9
+cmdLineArgs.args.use_spatial_prompts=True
 
 # Do it
 

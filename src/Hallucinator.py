@@ -120,21 +120,23 @@ def split_prompt(prompt):
 ####################################################
 
 class Hallucinator:
-    def __init__(self, cmdArgs ):
+    # TODO: dont use argparse args, use a config / json / something
+    # using argparseargs for now due to being in the middle of a refactor
+    def __init__(self, argparseArgs ):
         ### this will define all classwide member variables, so its easy to see
         ## should really convert this to something that is more explicit, but that will come later
-        self.args = cmdArgs
+        self.config = argparseArgs
 
         #### class wide variables set with default values
         self.clipPerceptorInputResolution = None # set after loading clip
         self.clipPerceptor = None # clip model
         self.clipDevice = None # torch device clip model is loaded onto
-        self.cifar100 = None #one shot clip model classes, used when logging clip info
+        self.clipCifar100 = None #one shot clip model classes, used when logging clip info
 
         self.quantizedImage = None # source image thats fed into taming transformers
         self.vqganDevice = None #torch device vqgan model is loaded onto
         self.vqganModel = None #vqgan model
-        self.gumbel = False #vqgan gumbel model in use
+        self.vqganGumbelEnabled = False #vqgan gumbel model in use
 
         self.optimiser = None #currently in use optimiser        
 
@@ -148,6 +150,8 @@ class Hallucinator:
         #### these need better names, wtf are they exactly?
         self.z_min = None
         self.z_max = None
+        self.toksY = None
+        self.toksX = None
         self.sideX = None
         self.sideY = None
         self.z_orig = None
@@ -164,6 +168,120 @@ class Hallucinator:
         #                                  std=[0.229, 0.224, 0.225])
         self.normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                                         std=[0.26862954, 0.26130258, 0.27577711])
+
+
+
+        # masking stuff
+        self.num_prompts = 0
+        self.blur_conv = None
+        self.prompt_masks = None
+        self.blindfold = []
+        self.noise_fac = 0.1
+
+
+    ########
+    ## new stuff im testing, very hackish here
+    ########
+    def InitMasks(self):
+        if self.config.use_spatial_prompts == False:
+            return
+
+        #Make prompt masks
+        img = Image.open(self.config.prompt_key_image)
+        pil_image = img.convert('RGB')
+        #pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
+        #pil_tensor = TF.to_tensor(pil_image)
+        #self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
+
+        prompt_key_image = np.asarray(pil_image)
+
+        #Set up color->prompt map
+        color_to_prompt_idx={}
+        all_prompts=[]
+        for i,(color_key,blind,prompt) in enumerate(self.config.spatial_prompts):
+            #append a collective promtp to all, to keepa  set style if we want
+            if prompt[-1]==' ':
+                prompt+=self.config.append_to_prompts
+            elif prompt[-1]=='.' or prompt[-1]=='|' or prompt[-1]==',':
+                prompt+=" "+self.config.append_to_prompts
+            else:
+                prompt+=". "+self.config.append_to_prompts
+
+            all_prompts.append(prompt)
+            self.blindfold.append(blind)
+            color_to_prompt_idx[color_key] = i
+        
+        color_to_prompt_idx_orig = dict(color_to_prompt_idx)
+
+        #init the masks
+        self.prompt_masks = torch.FloatTensor(
+            len(self.config.spatial_prompts),
+            1, #color channel
+            prompt_key_image.shape[0],
+            prompt_key_image.shape[1]).fill_(0)
+
+        #go pixel by pixel and assign it to one mask, based on closest color
+        for y in range(prompt_key_image.shape[0]):
+            for x in range(prompt_key_image.shape[1]):
+                key_color = tuple(prompt_key_image[y,x])
+
+                if key_color not in color_to_prompt_idx:
+                    min_dist=999999
+                    best_idx=-1
+                    for color,idx in color_to_prompt_idx_orig.items():
+                        dist = abs(color[0]-key_color[0])+abs(color[1]-key_color[1])+abs(color[2]-key_color[2])
+                        #print('{} - {} = {}'.format(color,key_color,dist))
+                        if dist<min_dist:
+                            min_dist = dist
+                            best_idx=idx
+                    color_to_prompt_idx[key_color]=best_idx #store so we don't need to compare again
+                    idx = best_idx
+                else:
+                    idx = color_to_prompt_idx[key_color]
+
+                self.prompt_masks[idx,0,y,x]=1
+
+        self.prompt_masks = self.prompt_masks.to(self.vqganDevice)
+
+        #dilate masks to prevent possible disontinuity artifacts
+        if self.config.dilate_masks:
+            struct_ele = torch.FloatTensor(1,1,self.config.dilate_masks,self.config.dilate_masks).fill_(1).to(self.vqganDevice)
+            self.prompt_masks = F.conv2d(self.prompt_masks,struct_ele,padding='same')
+
+        #resize masks to output size
+        self.prompt_masks = F.interpolate(self.prompt_masks,(self.toksY * 16, self.toksX * 16))
+
+        #make binary
+        self.prompt_masks[self.prompt_masks>0.1]=1
+
+        #rough display
+        if self.prompt_masks.size(0)>=3:
+            print('first 3 masks')
+            TF.to_pil_image(self.prompt_masks[0,0].cpu()).save('ex-masks-0.png')   
+            TF.to_pil_image(self.prompt_masks[1,0].cpu()).save('ex-masks-1.png')
+            TF.to_pil_image(self.prompt_masks[2,0].cpu()).save('ex-masks-2.png')
+            TF.to_pil_image(self.prompt_masks[0:3,0].cpu()).save('ex-masks-comb.png')
+            #display.display(display.Image('ex-masks.png')) 
+            if self.prompt_masks.size(0)>=6:
+                print('next 3 masks')
+                TF.to_pil_image(self.prompt_masks[3:6,0].cpu()).save('ex-masks.png')   
+                #display.display(display.Image('ex-masks.png')) 
+        
+        if any(self.blindfold):
+            #Set up blur used in blindfolding
+            k=13
+            self.blur_conv = torch.nn.Conv2d(3,3,k,1,'same',bias=False,padding_mode='reflect',groups=3)
+            for param in self.blur_conv.parameters():
+                param.requires_grad = False
+            self.blur_conv.weight[:] = 1/(k**2)
+
+            self.blur_conv = self.blur_conv.to(self.vqganDevice)
+        else:
+            self.blur_conv = None
+
+        self.all_phrases = all_prompts
+        self.num_prompts = len(all_prompts)
+
 
 
     #############
@@ -189,18 +307,24 @@ class Hallucinator:
 
 
     # stuff that needs to be initialized per request / reset between requests
-    def PerRequestInitialization(self):
+    def PerRequestInitialization(self):        
         self.InitPrompts()
         self.InitStartingImage()
+        self.InitMasks()
 
         self.CurrentCutoutMethod = self.GetMakeCutouts( self.clipPerceptorInputResolution )
         
-        # CLIP tokenize/encode   
-        if self.args.prompts:
-            for prompt in self.args.prompts:
+        # CLIP tokenize/encode
+        if self.all_phrases and self.config.use_spatial_prompts:
+            print("using masking images")
+            for prompt in self.all_phrases:
+                self.EmbedTextPrompt(prompt)
+        elif self.config.prompts:
+            print("using standard prompts")
+            for prompt in self.config.prompts:
                 self.EmbedTextPrompt(prompt)
 
-        for prompt in self.args.image_prompts:
+        for prompt in self.config.image_prompts:
             path, weight, stop = split_prompt(prompt)
             img = Image.open(path)
             pil_image = img.convert('RGB')
@@ -209,34 +333,56 @@ class Hallucinator:
             embed = self.clipPerceptor.encode_image(self.normalize(batch)).float()
             self.embededPrompts.append(Prompt(embed, weight, stop).to(self.clipDevice))
 
-        for seed, weight in zip(self.args.noise_prompt_seeds, self.args.noise_prompt_weights):
+        for seed, weight in zip(self.config.noise_prompt_seeds, self.config.noise_prompt_weights):
             gen = torch.Generator().manual_seed(seed)
             embed = torch.empty([1, self.clipPerceptor.visual.output_dim]).normal_(generator=gen)
             self.embededPrompts.append(Prompt(embed, weight).to(self.clipDevice))
 
-        self.optimiser = self.get_optimiser(self.quantizedImage, self.args.optimiser,self.args.step_size)
+        self.optimiser = self.get_optimiser(self.quantizedImage, self.config.optimiser,self.config.step_size)
 
-        if self.args.optimiser == "MADGRAD":
+        if self.config.optimiser == "MADGRAD":
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimiser, 'min', factor=0.999, patience=0)  
 
         # Output for the user
-        print('Optimising using:', self.args.optimiser)
+        print('Optimising using:', self.config.optimiser)
 
-        if self.args.prompts:
-            print('Using text prompts:', self.args.prompts)  
-        if self.args.image_prompts:
-            print('Using image prompts:', self.args.image_prompts)
-        if self.args.init_image:
-            print('Using initial image:', self.args.init_image)
-        if self.args.noise_prompt_weights:
-            print('Noise prompt weights:', self.args.noise_prompt_weights)    
+        if self.config.prompts:
+            print('Using text prompts:', self.config.prompts)  
+        if self.config.image_prompts:
+            print('Using image prompts:', self.config.image_prompts)
+        if self.config.init_image:
+            print('Using initial image:', self.config.init_image)
+        if self.config.noise_prompt_weights:
+            print('Noise prompt weights:', self.config.noise_prompt_weights)    
 
 
     # this method should reset everything aside from CLIP & vqgan model loading
     # this should allow this to run in 'server mode' where it can get repeated requests
-    # to geenrate without having unload / reload models
+    # to generate without having unload / reload models
     def PartialReset(self):
         # TODO
+        # can i just reset these variables and all is well? does stuff need to be detached and cleared out from CUDA devices?
+
+        self.log_torch_mem('Pre PartialReset')
+
+        self.quantizedImage = None
+        self.optimiser = None     
+        self.CurrentCutoutMethod = None
+        self.embededPrompts = []
+        self.all_phrases = []
+        self.z_min = None
+        self.z_max = None
+        self.sideX = None
+        self.sideY = None
+        self.z_orig = None
+        self.loss_idx = []
+        self.scheduler = None
+
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        self.log_torch_mem('Post PartialReset')
+
         pass
 
 
@@ -250,11 +396,11 @@ class Hallucinator:
     ##  Getters and converters
     ##############
     def GerCurrentImageAsPIL(self):
-        out = self.synth(self.quantizedImage, self.gumbel)
+        out = self.synth(self.quantizedImage, self.vqganGumbelEnabled)
         return TF.to_pil_image(out[0].cpu())
 
     def GetCurrentImageSynthed(self):
-        return self.synth( self.quantizedImage, self.gumbel)
+        return self.synth( self.quantizedImage, self.vqganGumbelEnabled)
 
     def ConvertToPIL(self, synthedImage):
         return TF.to_pil_image(synthedImage[0].cpu())
@@ -310,15 +456,22 @@ class Hallucinator:
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
 
-    def log_torch_mem(self):
+    def log_torch_mem(self, title = ''):
         t = torch.cuda.get_device_properties(0).total_memory
         r = torch.cuda.memory_reserved(0)
         a = torch.cuda.memory_allocated(0)
         f = r-a  # free inside reserved
+
+        if title != '':
+            print('>>>>  ' + title)
+
         print("total     VRAM:  " + str(t))
         print("reserved  VRAM:  " + str(r))
         print("allocated VRAM:  " + str(a))
         print("free      VRAM:  " + str(f))
+
+        if title != '':
+            print('>>>>  /' + title)
 
 
     ###################
@@ -336,6 +489,8 @@ class Hallucinator:
         else:
             z_q = self.vector_quantize(z.movedim(1, 3), self.vqganModel.quantize.embedding.weight).movedim(3, 1)
         return makeCutouts.clamp_with_grad(self.vqganModel.decode(z_q).add(1).div(2), 0, 1)
+
+
 
     ########################
     # get the optimiser ###
@@ -377,10 +532,10 @@ class Hallucinator:
     def GetMakeCutouts( self, clipPerceptorInputResolution ):
         # Cutout class options:
         # 'squish', 'latest','original','updated' or 'updatedpooling'
-        if self.args.cut_method == 'latest':
-            self.args.cut_method = "nerdy"
+        if self.config.cut_method == 'latest':
+            self.config.cut_method = "nerdy"
 
-        cutSize = self.args.cut_size
+        cutSize = self.config.cut_size
         if cutSize[0] == 0:
             cutSize[0] = clipPerceptorInputResolution
 
@@ -391,23 +546,28 @@ class Hallucinator:
         if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
             cutsMatchClip = False
 
-        print("Cutouts method: " + self.args.cut_method + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
+        print("Cutouts method: " + self.config.cut_method + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
 
         # used for whatever test cut thing im doing
-        if self.args.cut_method == 'test':
-            make_cutouts = makeCutouts.MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.args.cutn, cut_pow=self.args.cut_pow, use_pool=True, augments=self.args.augments)
+        if self.config.cut_method == 'test':
+            make_cutouts = makeCutouts.MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=True, augments=self.config.augments)
 
 
-        elif self.args.cut_method == 'growFromCenter':
-            make_cutouts = makeCutouts.MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.args.cutn, cut_pow=self.args.cut_pow, use_pool=True, augments=self.args.augments)        
-        elif self.args.cut_method == 'squish':        
-            make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.args.cutn, cut_pow=self.args.cut_pow, use_pool=True, augments=self.args.augments)
-        elif self.args.cut_method == 'original':
-            make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, self.args.cutn, cut_pow=self.args.cut_pow, augments=self.args.augments)
-        elif self.args.cut_method == 'nerdy':
-            make_cutouts = makeCutouts.MakeCutoutsNerdy(clipPerceptorInputResolution, self.args.cutn, cut_pow=self.args.cut_pow, augments=self.args.augments)
-        elif self.args.cut_method == 'nerdyNoPool':
-            make_cutouts = makeCutouts.MakeCutoutsNerdyNoPool(clipPerceptorInputResolution, self.args.cutn, cut_pow=self.args.cut_pow, augments=self.args.augments)
+        elif self.config.cut_method == 'maskTest':
+            make_cutouts = makeCutouts.MakeCutoutsMaskTest(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=False, augments=[])
+
+
+
+        elif self.config.cut_method == 'growFromCenter':
+            make_cutouts = makeCutouts.MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=True, augments=self.config.augments)        
+        elif self.config.cut_method == 'squish':        
+            make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=True, augments=self.config.augments)
+        elif self.config.cut_method == 'original':
+            make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, self.config.cutn, cut_pow=self.config.cut_pow, augments=self.config.augments)
+        elif self.config.cut_method == 'nerdy':
+            make_cutouts = makeCutouts.MakeCutoutsNerdy(clipPerceptorInputResolution, self.config.cutn, cut_pow=self.config.cut_pow, augments=self.config.augments)
+        elif self.config.cut_method == 'nerdyNoPool':
+            make_cutouts = makeCutouts.MakeCutoutsNerdyNoPool(clipPerceptorInputResolution, self.config.cutn, cut_pow=self.config.cut_pow, augments=self.config.augments)
         else:
             print("Bad cut method selected")
 
@@ -421,23 +581,23 @@ class Hallucinator:
 
     def InitTorch(self):
         print("Using pyTorch: " + str( torch.__version__) )
-        print("Using mixed precision: " + str(self.args.use_mixed_precision) )  
+        print("Using mixed precision: " + str(self.config.use_mixed_precision) )  
 
         #TODO hacky as fuck
-        makeCutouts.use_mixed_precision = self.args.use_mixed_precision
+        makeCutouts.use_mixed_precision = self.config.use_mixed_precision
 
-        if self.args.seed is None:
+        if self.config.seed is None:
             seed = torch.seed()
         else:
-            seed = self.args.seed  
+            seed = self.config.seed  
 
         print('Using seed:', seed)
         self.seed_torch(seed)
 
-        if self.args.deterministic >= 2:
+        if self.config.deterministic >= 2:
             print("Determinism at max: forcing a lot of things so this will work, no augs, non-pooling cut method, bad resampling")
-            self.args.augments = "none"
-            self.args.cut_method = "original"
+            self.config.augments = "none"
+            self.config.cut_method = "original"
 
             # need to make cutouts use deterministic stuff... probably not a good way
             makeCutouts.deterministic = True
@@ -459,7 +619,7 @@ class Hallucinator:
 
             # from nightly build for 1.11 -> 0 no warn, 1 warn, 2 error
             # torch.set_deterministic_debug_mode(2)
-        elif self.args.deterministic == 1:
+        elif self.config.deterministic == 1:
             print("Determinism at medium: cudnn determinism and benchmark disabled")
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False # NR: True is a bit faster, but can lead to OOM. False is more deterministic.
@@ -467,18 +627,18 @@ class Hallucinator:
             print("Determinism at minimum: cudnn benchmark on")
             torch.backends.cudnn.benchmark = True #apparently slightly faster, but less deterministic  
 
-        if self.args.use_mixed_precision==True:
+        if self.config.use_mixed_precision==True:
             print("cant use augments in mixed precision mode yet...")
-            self.args.augments = [] 
+            self.config.augments = [] 
 
         # Fallback to CPU if CUDA is not found and make sure GPU video rendering is also disabled
         # NB. May not work for AMD cards?
-        if not self.args.cuda_device == 'cpu' and not torch.cuda.is_available():
-            self.args.cuda_device = 'cpu'
+        if not self.config.cuda_device == 'cpu' and not torch.cuda.is_available():
+            self.config.cuda_device = 'cpu'
             print("Warning: No GPU found! Using the CPU instead. The iterations will be slow.")
             print("Perhaps CUDA/ROCm or the right pytorch version is not properly installed?")     
 
-        if self.args.anomaly_checker:
+        if self.config.anomaly_checker:
             torch.autograd.set_detect_anomaly(True)
 
 
@@ -486,27 +646,27 @@ class Hallucinator:
 
     def InitPrompts(self):
         # Split text prompts using the pipe character (weights are split later)
-        if self.args.prompts:
+        if self.config.prompts:
             # For stories, there will be many phrases
-            story_phrases = [phrase.strip() for phrase in self.args.prompts.split("^")]
+            story_phrases = [phrase.strip() for phrase in self.config.prompts.split("^")]
             
             # Make a list of all phrases
             for phrase in story_phrases:
                 self.all_phrases.append(phrase.split("|"))
             
             # First phrase
-            self.args.prompts = self.all_phrases[0]
+            self.config.prompts = self.all_phrases[0]
             
         # Split target images using the pipe character (weights are split later)
-        if self.args.image_prompts:
-            self.args.image_prompts = self.args.image_prompts.split("|")
-            self.args.image_prompts = [image.strip() for image in self.args.image_prompts]
+        if self.config.image_prompts:
+            self.config.image_prompts = self.config.image_prompts.split("|")
+            self.config.image_prompts = [image.strip() for image in self.config.image_prompts]
 
 
 
 
     def InitClip(self):
-        if self.args.log_clip:
+        if self.config.log_clip:
             print("logging clip probabilities at end, loading vocab stuff")
             cifar100 = CIFAR100(root=".", download=True, train=False)
 
@@ -520,17 +680,17 @@ class Hallucinator:
 
         print( "available clip models: " + str(clip.available_models() ))
         print("CLIP jit: " + str(jit))
-        print("using clip model: " + self.args.clip_model)
+        print("using clip model: " + self.config.clip_model)
 
-        if self.args.clip_cpu == False:
+        if self.config.clip_cpu == False:
             self.clipDevice = self.vqganDevice
             if jit == False:
-                self.clipPerceptor = clip.load(self.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().requires_grad_(False).to(self.clipDevice)
+                self.clipPerceptor = clip.load(self.config.clip_model, jit=jit, download_root="./clipModels/")[0].eval().requires_grad_(False).to(self.clipDevice)
             else:
-                self.clipPerceptor = clip.load(self.args.clip_model, jit=jit, download_root="./clipModels/")[0].eval().to(self.clipDevice)    
+                self.clipPerceptor = clip.load(self.config.clip_model, jit=jit, download_root="./clipModels/")[0].eval().to(self.clipDevice)    
         else:
             self.clipDevice = torch.device("cpu")
-            self.clipPerceptor = clip.load(self.args.clip_model, "cpu", jit=jit)[0].eval().requires_grad_(False).to(self.clipDevice) 
+            self.clipPerceptor = clip.load(self.config.clip_model, "cpu", jit=jit)[0].eval().requires_grad_(False).to(self.clipDevice) 
 
 
 
@@ -543,12 +703,12 @@ class Hallucinator:
 
 
     def InitVQGAN(self):
-        self.vqganDevice = torch.device(self.args.cuda_device)
+        self.vqganDevice = torch.device(self.config.cuda_device)
 
-        config_path = self.args.vqgan_config
-        checkpoint_path = self.args.vqgan_checkpoint
+        config_path = self.config.vqgan_config
+        checkpoint_path = self.config.vqgan_checkpoint
 
-        self.gumbel = False
+        self.vqganGumbelEnabled = False
         config = OmegaConf.load(config_path)
 
         print("---  VQGAN config " + str(config_path))    
@@ -563,7 +723,7 @@ class Hallucinator:
             self.vqganModel = vqgan.GumbelVQ(**config.model.params)
             self.vqganModel.eval().requires_grad_(False)
             self.vqganModel.init_from_ckpt(checkpoint_path)
-            self.gumbel = True
+            self.vqganGumbelEnabled = True
         elif config.model.target == 'taming.models.cond_transformer.Net2NetTransformer':
             parent_model = cond_transformer.Net2NetTransformer(**config.model.params)
             parent_model.eval().requires_grad_(False)
@@ -583,15 +743,15 @@ class Hallucinator:
 
     def InitStartingImage(self):
         vqganNumResolutionsF = 2**(self.vqganModel.decoder.num_resolutions - 1)
-        toksX, toksY = self.args.size[0] // vqganNumResolutionsF, self.args.size[1] // vqganNumResolutionsF
-        sideX, sideY = toksX * vqganNumResolutionsF, toksY * vqganNumResolutionsF
+        self.toksX, self.toksY = self.config.size[0] // vqganNumResolutionsF, self.config.size[1] // vqganNumResolutionsF
+        self.sideX, self.sideY = self.toksX * vqganNumResolutionsF, self.toksY * vqganNumResolutionsF
 
         print("vqgan input resolutions: " + str(self.vqganModel.decoder.num_resolutions))
         print("cliperceptor input_res (aka cut size): " + str(self.clipPerceptorInputResolution) + " and whatever f is supposed to be: " + str(vqganNumResolutionsF))
-        print("Toks X,Y: " + str(toksX) + ", " + str(toksY) + "      SizeX,Y: " + str(sideX) + ", " + str(sideY))
+        print("Toks X,Y: " + str(self.toksX) + ", " + str(self.toksY) + "      SizeX,Y: " + str(self.sideX) + ", " + str(self.sideY))
         
         # Gumbel or not?
-        if self.gumbel:
+        if self.vqganGumbelEnabled:
             e_dim = 256
             n_toks = self.vqganModel.quantize.n_embed
             self.z_min = self.vqganModel.quantize.embed.weight.min(dim=0).values[None, :, None, None]
@@ -603,40 +763,40 @@ class Hallucinator:
             self.z_max = self.vqganModel.quantize.embedding.weight.max(dim=0).values[None, :, None, None]
 
 
-        if self.args.init_image:
-            if 'http' in self.args.init_image:
-                img = Image.open(urlopen(self.args.init_image))
+        if self.config.init_image:
+            if 'http' in self.config.init_image:
+                img = Image.open(urlopen(self.config.init_image))
             else:
-                img = Image.open(self.args.init_image)
+                img = Image.open(self.config.init_image)
                 pil_image = img.convert('RGB')
-                pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
+                pil_image = pil_image.resize((self.sideX, self.sideY), Image.LANCZOS)
                 pil_tensor = TF.to_tensor(pil_image)
                 self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
-        elif self.args.init_noise == 'pixels':
-            img = imageUtils.random_noise_image(self.args.size[0], self.args.size[1])    
+        elif self.config.init_noise == 'pixels':
+            img = imageUtils.random_noise_image(self.config.size[0], self.config.size[1])    
             pil_image = img.convert('RGB')
-            pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
+            pil_image = pil_image.resize((self.sideX, self.sideY), Image.LANCZOS)
             pil_tensor = TF.to_tensor(pil_image)
             self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
-        elif self.args.init_noise == 'gradient':
-            img = imageUtils.random_gradient_image(self.args.size[0], self.args.size[1])
+        elif self.config.init_noise == 'gradient':
+            img = imageUtils.random_gradient_image(self.config.size[0], self.config.size[1])
             pil_image = img.convert('RGB')
-            pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
+            pil_image = pil_image.resize((self.sideX, self.sideY), Image.LANCZOS)
             pil_tensor = TF.to_tensor(pil_image)
             self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
         else:
-            one_hot = F.one_hot(torch.randint(n_toks, [toksY * toksX], device=self.vqganDevice), n_toks).float()
+            one_hot = F.one_hot(torch.randint(n_toks, [self.toksY * self.toksX], device=self.vqganDevice), n_toks).float()
             # z = one_hot @ vqganModel.quantize.embedding.weight
-            if self.gumbel:
+            if self.vqganGumbelEnabled:
                 self.quantizedImage = one_hot @ self.vqganModel.quantize.embed.weight
             else:
                 self.quantizedImage = one_hot @ self.vqganModel.quantize.embedding.weight
 
-            self.quantizedImage = self.quantizedImage.view([-1, toksY, toksX, e_dim]).permute(0, 3, 1, 2) 
+            self.quantizedImage = self.quantizedImage.view([-1, self.toksY, self.toksX, e_dim]).permute(0, 3, 1, 2) 
             #z = torch.rand_like(z)*2						# NR: check
 
 
-        if self.args.init_weight:
+        if self.config.init_weight:
             z_orig = self.quantizedImage.clone()
             z_orig.requires_grad_(False)
 
@@ -652,11 +812,11 @@ class Hallucinator:
 
         img = self.normalize(self.CurrentCutoutMethod(imgout))
 
-        if self.args.log_clip_oneshot:
+        if self.config.log_clip_oneshot:
             #one shot identification
             image_features = self.clipPerceptor.encode_image(img).float()
 
-            text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in self.cifar100.classes]).to(self.clipDevice)
+            text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in self.clipCifar100.classes]).to(self.clipDevice)
             
             text_features = self.clipPerceptor.encode_text(text_inputs).float()
             text_features /= text_features.norm(dim=-1, keepdim=True)
@@ -670,14 +830,14 @@ class Hallucinator:
             # Print the result
             print("\nOne-shot predictions:\n")
             for value, index in zip(values, indices):
-                print(f"{self.cifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
+                print(f"{self.clipCifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
 
-        if self.args.log_clip:
+        if self.config.log_clip:
             # prompt matching percentages
             textins = []
             promptPartStrs = []
-            if self.args.prompts:
-                for prompt in self.args.prompts:
+            if self.config.prompts:
+                for prompt in self.config.prompts:
                     txt, weight, stop = split_prompt(prompt)  
                     splitTxt = txt.split()
                     for stxt in splitTxt:   
@@ -719,37 +879,80 @@ class Hallucinator:
     ######################
 
     def ascend_txt(self, iteration, out):
-        with torch.cuda.amp.autocast(self.args.use_mixed_precision):
+        with torch.cuda.amp.autocast(self.config.use_mixed_precision):
 
-            cutouts = self.CurrentCutoutMethod(out)
+            cutouts, cutout_coords = self.CurrentCutoutMethod(out)
+
+            # attempt masking stuff
+            if self.config.use_spatial_prompts:
+                cutouts_detached = cutouts.detach() #used to prevent gradient for unmask parts
+                if self.blur_conv is not None:
+                    #Get the "blindfolded" image by blurring then addimg more noise
+                    facs = cutouts.new_empty([cutouts.size(0), 1, 1, 1]).uniform_(0, self.noise_fac)
+                    cutouts_blurred = self.blur_conv(cutouts_detached)+ facs * torch.randn_like(cutouts_detached)
+
+
+                cut_size = self.config.cut_size
+
+                #get mask patches
+                cutout_prompt_masks = []
+                for (x1,x2,y1,y2) in cutout_coords:
+                    cutout_mask = self.prompt_masks[:,:,y1:y2,x1:x2]
+                    cutout_mask = makeCutouts.resample(cutout_mask, (cut_size[0], cut_size[1]))
+                    cutout_prompt_masks.append(cutout_mask)
+                cutout_prompt_masks = torch.stack(cutout_prompt_masks,dim=1) #-> prompts X cutouts X color X H X W
+                
+                #apply each prompt, masking gradients
+                prompts_gradient_masked_cutouts = []
+                for idx,prompt in enumerate(self.embededPrompts):
+                    keep_mask = cutout_prompt_masks[idx] #-> cutouts X color X H X W
+                    #only apply this prompt if one image has a (big enough) part of mask
+                    if keep_mask.sum(dim=3).sum(dim=2).max()> cut_size[0]*2: #todo, change this
+                        
+                        block_mask = 1-keep_mask
+
+                        #compose cutout of gradient and non-gradient parts
+                        if self.blindfold[idx] and ((not isinstance(self.blindfold[idx],float)) or self.blindfold[idx]>random.random()):
+                            gradient_masked_cutouts = keep_mask*cutouts + block_mask*cutouts_blurred
+                        else:
+                            gradient_masked_cutouts = keep_mask*cutouts + block_mask*cutouts_detached
+
+                        prompts_gradient_masked_cutouts.append(gradient_masked_cutouts)
+                cutouts = torch.cat(prompts_gradient_masked_cutouts,dim=0)            
+
+
 
             if self.clipDevice != self.vqganDevice:
-                iii = self.clipPerceptor.encode_image(self.normalize(cutouts.to(self.clipDevice))).float()
+                clipEncodedImage = self.clipPerceptor.encode_image(self.normalize(cutouts.to(self.clipDevice))).float()
             else:
-                iii = self.clipPerceptor.encode_image(self.normalize(cutouts)).float()
+                clipEncodedImage = self.clipPerceptor.encode_image(self.normalize(cutouts)).float()
 
             result = []        
 
-            if self.args.init_weight:
+            if self.config.init_weight:
                 # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
-                result.append(F.mse_loss(self.quantizedImage, torch.zeros_like(self.z_orig)) * ((1/torch.tensor(iteration*2 + 1))*self.args.init_weight) / 2)
+                result.append(F.mse_loss(self.quantizedImage, torch.zeros_like(self.z_orig)) * ((1/torch.tensor(iteration*2 + 1))*self.config.init_weight) / 2)
 
-            for prompt in self.embededPrompts:
-                result.append(prompt(iii))
+            if self.config.use_spatial_prompts:
+                for prompt_masked_iii,prompt in zip(torch.chunk(clipEncodedImage,self.num_prompts,dim=0),self.embededPrompts):
+                    result.append(prompt(prompt_masked_iii))
+            else:
+                for prompt in self.embededPrompts:
+                    result.append(prompt(clipEncodedImage))
             
             return result # return loss
 
 
     def train(self, iteration):
-        with torch.cuda.amp.autocast(self.args.use_mixed_precision):
+        with torch.cuda.amp.autocast(self.config.use_mixed_precision):
             self.optimiser.zero_grad(set_to_none=True)
             
-            out = self.synth(self.quantizedImage, self.gumbel) 
+            out = self.synth(self.quantizedImage, self.vqganGumbelEnabled) 
             
             lossAll = self.ascend_txt(iteration, out)
             lossSum = sum(lossAll)
 
-            if self.args.optimiser == "MADGRAD":
+            if self.config.optimiser == "MADGRAD":
                 self.loss_idx.append(lossSum.item())
                 if iteration > 100: #use only 100 last looses to avg
                     avg_loss = sum(self.loss_idx[iteration-100:])/len(self.loss_idx[iteration-100:]) 
@@ -758,7 +961,7 @@ class Hallucinator:
 
                 self.scheduler.step(avg_loss)
             
-            if self.args.use_mixed_precision == False:
+            if self.config.use_mixed_precision == False:
                 lossSum.backward()
                 self.optimiser.step()
             else:

@@ -177,7 +177,8 @@ class MakeCutoutsSquish(nn.Module):
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
-        return batch
+
+        return batch, [] #TODO, make this return cordinates for masking a well
 
 
 #latest make cutouts this came with - works well on images <= 600x600 ish
@@ -213,7 +214,8 @@ class MakeCutoutsNerdy(nn.Module):
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
-        return batch
+
+        return batch, [] #TODO, make this return cordinates for masking a well
 
 # An Nerdy updated version with selectable Kornia augments, but no pooling:
 # nerdyNoPool
@@ -269,7 +271,8 @@ class MakeCutoutsNerdyNoPool(nn.Module):
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
-        return batch
+
+        return batch, [] #TODO, make this return cordinates for masking a well
 
 
 # This is the original version (No pooling)
@@ -293,7 +296,8 @@ class MakeCutoutsOrig(nn.Module):
             offsety = torch.randint(0, sideY - size + 1, ())
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
             cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
-        return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1)
+
+        return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1), [] #TODO, make this return cordinates for masking a well
 
 
 
@@ -367,7 +371,8 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
-        return batch
+
+        return batch, [] #TODO, make this return cordinates for masking a well
 
 
 
@@ -420,4 +425,75 @@ class MakeCutoutsOneSpot(MakeCutoutsSquish):
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
-        return batch
+
+        return batch, [] #TODO, make this return cordinates for masking a well
+
+
+
+
+
+
+
+
+class MakeCutoutsMaskTest(nn.Module):
+    def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
+        super().__init__()
+        self.cut_size_x = cut_size_x
+        self.cut_size_y = cut_size_y
+        self.cutn = cutn
+        self.cut_pow = cut_pow # not used with pooling
+        self.use_pool = use_pool
+        self.clipRes = clipRes
+        
+        #self.augs = setupAugmentList(cut_size_x, cut_size_y)
+        self.augs = setupAugmentList(augments, self.clipRes, self.clipRes)
+
+        self.noise_fac = 0.1
+        # self.noise_fac = False
+
+        # Pooling
+        self.av_pool = nn.AdaptiveAvgPool2d((self.clipRes, self.clipRes))
+        self.max_pool = nn.AdaptiveMaxPool2d((self.clipRes, self.clipRes))
+
+    @autocast(enabled=use_mixed_precision)
+    def forward(self, input):
+        sideY, sideX = input.shape[2:4]
+
+        max_size_x = sideX
+        max_size_y = sideY
+
+        min_size_x = min(sideX, self.cut_size_x)
+        min_size_y = min(sideX, self.cut_size_y)
+
+        cutouts = []
+        cutout_coords = []
+        
+        for _ in range(self.cutn):            
+            # Use Pooling and original method together
+
+            size_x = int(torch.rand([])**self.cut_pow * (max_size_x - min_size_x) + min_size_x)
+            size_y = int(torch.rand([])**self.cut_pow * (max_size_y - min_size_y) + min_size_y)
+
+            offsetx = torch.randint(0, sideX - size_x + 1, ())
+            offsety = torch.randint(0, sideY - size_y + 1, ())
+
+            cutout = input[:, :, offsety:offsety + size_y, offsetx:offsetx + size_x]
+            cutout_coords.append([offsetx,offsetx + size_x,offsety,offsety + size_y])
+
+            # now pool for some reason? dont know what i'm doing but the results are good...
+            if self.use_pool:
+                cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
+                cutouts.append(cutout)
+            else:
+                cutouts.append(resample(cutout, (self.clipRes, self.clipRes)))            
+            
+        batch = self.augs(torch.cat(cutouts, dim=0))
+        
+        if self.noise_fac:
+            facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
+            batch = batch + facs * torch.randn_like(batch)
+
+        ## lets attempt to apply masked shit here i guess?
+
+
+        return batch, cutout_coords      

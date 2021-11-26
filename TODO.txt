@@ -1,0 +1,15 @@
+
+Various things that need to be done, yes I'm too lazy to use a ticket tracking system for this:
+
+- search for #TOD or # TODO for spots in code with notes
+
+
+
+TODOs:
+
+- dont rely on argparse stuff in hallucinator class, seperate that stuff out into config files in json
+
+
+
+
+

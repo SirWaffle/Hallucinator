@@ -1,11 +1,8 @@
-# original VQGAN-CLIP implementation ( forked from nerdyrodent )
-
-many thanks to  <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github
-
+many thanks to Nerdy Rodent <https://github.com/nerdyrodent/VQGAN-CLIP> ! More information and sample images can be seen on the original github. 
 
 
 # Hallucinator
-I have modified the original readme to reflect my repo - the first readme was well done and obtained from the original fork.
+I have modified the original readme to reflect my repo - the first readme was well done and contains much more information than my readme. I suggest looking over the readme there first (  <https://github.com/nerdyrodent/VQGAN-CLIP> ), since I have removed a lot of what was in the original readme for brevity
 
 ## Warnings
 -  I am an experienced programmer, but new to python, so my code may be very non-pythonic and weird in many places
@@ -13,21 +10,25 @@ I have modified the original readme to reflect my repo - the first readme was we
 -  I am treating this as my own private repo without concerns of anyone that might look at this code, so things may change without warning and with low quality 
 
 ## Change list from original repository
+- many changes to make this script more friendly when launched from a seperate process ( ie, discord bot )
 - minor memory usage reductions
 - minor performance improvements
+- can now generate fully deterministic images, although its slower and can't be used with pooling and other features
 - code refactoring
 - various new commandline options
-- ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different genreation techniques
+- for users with low RAM GPU's desperate to get more resolution, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM
+- ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different generation techniques
 - addition of mixed precision mode to save more memory ( but the output isnt very good yet )
 - more options for where / how often output gets saved and written
-- removal of video generation from scripts to reduce clutter ( i use external tools for this )
+- removal of video generation and image feedback scripts, to reduce clutter while i am learning this system ( i use external tools for this )
 - stats, memory usage logging
 - clip analysis logging which may or may not be correct
-- cut method modifications for higher res images
+- cut method modifications for higher res images and different generative patterns
 
 ## roadmap
+- integration of more models and methods for generation
 - masking to prevent modifications in certain places, masking to provide specific prompts in certain locations
-- integration via plugins to art programs for itneractive generation
+- integration via plugins to art programs for interactive generation
 - interactive server mode for a dedicated interactive instance on a local machine
 
 
@@ -43,14 +44,14 @@ Original notebook: [![Open In Colab][colab-badge]][colab-notebook]
 
 
 Environment:
-
-* Tested on Windows 10
-* PyTorch 1.10.0
-* GPUs: Nvidia RTX A6000, 1080 TI, and 1070 Mobile
-* Typical VRAM requirements:
-  * 24 GB for a 900x900 image
-  * 10 GB for a 512x512 image
-  * 8 GB for a 380x380 image
+* Windows 10
+* Miniconda
+* PyTorch 1.10.0 / Cuda 11.3
+* GPUs tested: Nvidia RTX A6000 ( 48 GB ), Nvidia 1080 standard ( 8 GB ), and Nvidia 1070 Mobile ( 8 GB )
+* VRAM requirements for resolutions I have tested:
+  * 48 GB can handle up to 1400 x 1400 full precision
+  * 8 GB for 512 x 512 using mixed precision
+  * 8 GB for 450 x 450 image using full precision
 
 ## Set up
 
@@ -71,7 +72,7 @@ will generate a command line for you to install the latest pytorch. I use the co
 Install other required Python packages:
 
 ```sh
-pip install ftfy regex tqdm omegaconf pytorch-lightning IPython kornia imageio imageio-ffmpeg einops torch_optimizer
+pip install ftfy regex tqdm omegaconf pytorch-lightning IPython kornia imageio imageio-ffmpeg einops torch_optimizer transformers
 ```
 
 Clone required repositories:

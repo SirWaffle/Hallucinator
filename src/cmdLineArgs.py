@@ -125,7 +125,7 @@ def init():
 
 
         if args.save_json_strip_misc:
-            #pull out user specific stuff here, so we can make a command
+            #pull out user specific stuff here that will almost always be controlled via commandline, so we can make a clean command file
             inputArgs.pop("prompts", None)
             inputArgs.pop("seed", None)
             inputArgs.pop("image_prompts", None)

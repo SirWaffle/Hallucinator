@@ -1,20 +1,26 @@
-# my mods from:
+# new mods from various notebooks:
 #
 # inital repo:
 # https://github.com/nerdyrodent/VQGAN-CLIP
+#
+#
+# spatial masks
+# https://colab.research.google.com/drive/1B9hPy1-6qhnRL3JNusFmfyWoYvjiJ1jq?usp=sharing#scrollTo=tLw9p5Rzacso
+#
 #
 # MSE
 # https://www.reddit.com/r/bigsleep/comments/onmz5r/mse_regulized_vqgan_clip/
 # https://colab.research.google.com/drive/1gFn9u3oPOgsNzJWEFmdK-N9h_y65b8fj?usp=sharing#scrollTo=wSfISAhyPmyp
 #
+#
 # MADGRAD implementation reference
 # https://www.kaggle.com/yannnobrega/vqgan-clip-z-quantize-method
-
-
+#
+#
 # torch-optimizer info
 # https://pypi.org/project/torch-optimizer/
 #
-
+#
 # Originally made by Katherine Crowson (https://github.com/crowsonkb, https://twitter.com/RiversHaveWings)
 # The original BigGAN+CLIP method was by https://twitter.com/advadnoun
 
@@ -146,23 +152,26 @@ elif cmdLineArgs.args.augments == 'None':
     cmdLineArgs.args.augments = []
 
 
+#TODO: this all needs to be changed to command line args, or config files, or something. for now, this
 ## hacky mask testing shit for now
-cmdLineArgs.args.spatial_prompts=[
-    ( (255,0,0), 0.2, '''a massive, dark, steampunk building filling the picture. a mass of steampunk. gray and black machine.'''),
-    ( (0,255,0), 0.5, '''a beautiful lush tree on a steampunk ledge'''),
-    ( (0,0,255), 0.7, '''a single small sliver of glowing moon in a blue sky'''),
-    ( (0,0,0), 0.9, '''clear skies above. nothing but blue.'''),
-]
+#cmdLineArgs.args.spatial_prompts=[
+#    ( (255,0,0), 0.1, '''teeth beksinski'''),
+#    ( (0,255,0), 0.1, '''demon gustave dore'''),
+#    ( (0,0,255), 0.1, '''eggs giger'''),
+#    ( (0,0,0), 0.1, '''stained glass'''),
+#]
+#
+#cmdLineArgs.args.append_to_prompts = ''
+#cmdLineArgs.args.prompt_key_image = './examples/4-color-mask.png'
+#cmdLineArgs.args.dilate_masks = 10
+#cmdLineArgs.args.use_spatial_prompts=True
+#### /end hacky testing for spatial prompts
+cmdLineArgs.args.use_spatial_prompts=False
 
-cmdLineArgs.args.append_to_prompts = 'trending on artstation'
-cmdLineArgs.args.prompt_key_image = 'tower-mask.png'
-cmdLineArgs.args.dilate_masks = 9
-cmdLineArgs.args.use_spatial_prompts=True
 
 # Do it
 
 hallucinatorInst = Hallucinator.Hallucinator(cmdLineArgs.args)
-
 hallucinatorInst.FullInitialize()
 
 # write out the input noise...

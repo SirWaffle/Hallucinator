@@ -199,7 +199,7 @@ class Hallucinator:
         color_to_prompt_idx={}
         all_prompts=[]
         for i,(color_key,blind,prompt) in enumerate(self.config.spatial_prompts):
-            #append a collective promtp to all, to keepa  set style if we want
+            #append a collective promtp to all, to keep a set style if we want
             if prompt[-1]==' ':
                 prompt+=self.config.append_to_prompts
             elif prompt[-1]=='.' or prompt[-1]=='|' or prompt[-1]==',':
@@ -383,7 +383,6 @@ class Hallucinator:
 
         self.log_torch_mem('Post PartialReset')
 
-        pass
 
 
     # shutdown everything

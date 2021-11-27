@@ -154,7 +154,7 @@ class Hallucinator:
         self.toksX = None
         self.sideX = None
         self.sideY = None
-        self.z_orig = None
+        self.original_quantizedImage = None
 
         #MADGRAD related, needs better naming
         self.loss_idx = []
@@ -179,10 +179,19 @@ class Hallucinator:
         self.noise_fac = 0.1
 
 
+        #lock image mask     
+        self.lock_image_mask_np = None
+        self.lock_image_original_pil = None
+
+        self.lock_image_original_tensor = None
+        self.lock_image_mask_tensor = None
+        self.lock_image_mask_tensor_invert = None
+
+
     ########
     ## new stuff im testing, very hackish here
     ########
-    def InitMasks(self):
+    def InitSpatialPromptMasks(self):
         if self.config.use_spatial_prompts == False:
             return
 
@@ -310,7 +319,8 @@ class Hallucinator:
     def PerRequestInitialization(self):        
         self.InitPrompts()
         self.InitStartingImage()
-        self.InitMasks()
+        self.InitSpatialPromptMasks()
+        self.InitLockImageMask()
 
         self.CurrentCutoutMethod = self.GetMakeCutouts( self.clipPerceptorInputResolution )
         
@@ -374,7 +384,7 @@ class Hallucinator:
         self.z_max = None
         self.sideX = None
         self.sideY = None
-        self.z_orig = None
+        self.original_quantizedImage = None
         self.loss_idx = []
         self.scheduler = None
 
@@ -770,6 +780,7 @@ class Hallucinator:
                 pil_image = img.convert('RGB')
                 pil_image = pil_image.resize((self.sideX, self.sideY), Image.LANCZOS)
                 pil_tensor = TF.to_tensor(pil_image)
+                print( 'first encoding -> pil_tensor size: ' + str( pil_tensor.size() ) )
                 self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
         elif self.config.init_noise == 'pixels':
             img = imageUtils.random_noise_image(self.config.size[0], self.config.size[1])    
@@ -795,9 +806,11 @@ class Hallucinator:
             #z = torch.rand_like(z)*2						# NR: check
 
 
-        if self.config.init_weight:
-            z_orig = self.quantizedImage.clone()
-            z_orig.requires_grad_(False)
+        if self.config.init_weight or self.config.use_image_lock_mask:
+            #TODO is this right?
+            self.original_quantizedImage = self.quantizedImage.detach()
+            #self.original_quantizedImage = self.quantizedImage.clone()
+            #self.original_quantizedImage.requires_grad_(False)
 
         self.quantizedImage.requires_grad_(True)
 
@@ -930,7 +943,7 @@ class Hallucinator:
 
             if self.config.init_weight:
                 # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
-                result.append(F.mse_loss(self.quantizedImage, torch.zeros_like(self.z_orig)) * ((1/torch.tensor(iteration*2 + 1))*self.config.init_weight) / 2)
+                result.append(F.mse_loss(self.quantizedImage, torch.zeros_like(self.original_quantizedImage)) * ((1/torch.tensor(iteration*2 + 1))*self.config.init_weight) / 2)
 
             if self.config.use_spatial_prompts:
                 for prompt_masked_iii,prompt in zip(torch.chunk(clipEncodedImage,self.num_prompts,dim=0),self.embededPrompts):
@@ -972,4 +985,65 @@ class Hallucinator:
                 self.quantizedImage.copy_(self.quantizedImage.maximum(self.z_min).minimum(self.z_max))
 
             return out, lossAll, lossSum
+
+
+
+    #########################
+    ### do manipulations to the image sent to vqgan prior to training steps
+    ### for example, image mask lock, or the image zooming effect
+    #########################
+    def OnPreTrain(self, iteration):
+        #TODO: make this use predicates or classes for manipulations, for now jsut hard code some
+        # i am also 100% sure theres a better way to do this, but lets just see what happens for now
+        #this is also very wrong, just see what happens...
+        if self.config.use_image_lock_mask == True and iteration % self.config.image_lock_overwrite_iteration == 0:
+            with torch.inference_mode():
+                curQuantImg = self.synth(self.quantizedImage, self.vqganGumbelEnabled)
+
+                #this removes the first dim sized 1 to match the rest
+                curQuantImg = torch.squeeze(curQuantImg)
+
+                #keepCurrentImg = torch.zeros(curQuantImg.size()) + 0
+                keepCurrentImg = curQuantImg * self.lock_image_mask_tensor_invert.int().float()
+
+                #keepOrig = torch.zeros(self.lock_image_original_tensor.size()) + 0
+                keepOrig = self.lock_image_original_tensor * self.lock_image_mask_tensor.int().float()
+
+                pil_tensor = keepCurrentImg + keepOrig
+
+            # Re-encode
+            self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
+            self.original_quantizedImage = self.quantizedImage.detach()
+            
+            self.quantizedImage.requires_grad_(True)
+            self.optimiser = self.get_optimiser(self.quantizedImage, self.config.optimiser, self.config.step_size)
+
+    def OnFinishGeneration(self):
+        pass
+
+            
+
+
+
+    def InitLockImageMask(self):
+        if self.config.use_image_lock_mask == False:
+            return
+
+        #store original
+        self.lock_image_original_pil = self.GerCurrentImageAsPIL()
+        self.lock_image_original_tensor = TF.to_tensor(self.lock_image_original_pil).to(self.vqganDevice)
+
+        #Make prompt masks
+        img = Image.open(self.config.image_lock_mask)
+        pil_image = img.convert('RGB')
+        #dest_gray = pil_image.convert('L')
+        
+        self.lock_image_mask_np  = np.asarray(pil_image)
+
+        #makes float32 mask
+        self.lock_image_mask_tensor = TF.to_tensor(self.lock_image_mask_np).to(self.vqganDevice)
+
+        #make boolean masks
+        self.lock_image_mask_tensor_invert = torch.logical_not( self.lock_image_mask_tensor )
+        self.lock_image_mask_tensor = torch.logical_not( self.lock_image_mask_tensor_invert )
     

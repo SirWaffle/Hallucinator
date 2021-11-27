@@ -166,7 +166,15 @@ elif cmdLineArgs.args.augments == 'None':
 #cmdLineArgs.args.dilate_masks = 10
 #cmdLineArgs.args.use_spatial_prompts=True
 #### /end hacky testing for spatial prompts
-cmdLineArgs.args.use_spatial_prompts=False
+cmdLineArgs.args.use_spatial_prompts = False
+
+
+##### lets hard code a test for locking parts of the image with a mask
+#cmdLineArgs.args.image_lock_mask = './examples/image-mask-square.png'
+#cmdLineArgs.args.image_lock_mask = './examples/image-mask-square-invert.png'
+cmdLineArgs.args.use_image_lock_mask = False
+#cmdLineArgs.args.image_lock_overwrite_iteration = 3 #3 actually seems to work allright... this code needs a massive speedup though
+
 
 
 # Do it
@@ -215,6 +223,8 @@ try:
 
                     phraseCounter += 1
             
+            #image manipulations before training is called, such as the zoom effect
+            hallucinatorInst.OnPreTrain(iteration)
 
             # Training time
             train(iteration)
@@ -222,6 +232,9 @@ try:
             
             # Ready to stop yet?
             if iteration == cmdLineArgs.args.max_iterations:
+
+                hallucinatorInst.OnFinishGeneration()
+
                 # Save final image
                 out = hallucinatorInst.GetCurrentImageSynthed()                                  
                 img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]

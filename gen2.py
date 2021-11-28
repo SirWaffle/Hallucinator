@@ -28,6 +28,7 @@
 import sys
 import os
 import numpy as np
+import copy
 
 # shut off tqdm log spam by uncommenting the below
 from tqdm import tqdm
@@ -40,6 +41,8 @@ from src import cmdLineArgs
 cmdLineArgs.init()
 
 from src import Hallucinator
+from src import ImageMods
+from src import GenerateJob
 
 import gc
 
@@ -152,6 +155,7 @@ elif cmdLineArgs.args.augments == 'None':
     cmdLineArgs.args.augments = []
 
 
+
 #TODO: this all needs to be changed to command line args, or config files, or something. for now, this
 ## hacky mask testing shit for now
 #cmdLineArgs.args.spatial_prompts=[
@@ -169,34 +173,80 @@ elif cmdLineArgs.args.augments == 'None':
 cmdLineArgs.args.use_spatial_prompts = False
 
 
-# Do it
 
 hallucinatorInst = Hallucinator.Hallucinator(cmdLineArgs.args)
 hallucinatorInst.Initialize()
 
+
+argsCopy = copy.deepcopy(cmdLineArgs.args)
+
 genJob = hallucinatorInst.CreateNewGenerationJob(cmdLineArgs.args)
 
-# write out the input noise...
-out = genJob.GerCurrentImageAsPIL()
-info = PngImagePlugin.PngInfo()
-info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-out.save( build_filename_path( cmdLineArgs.args.output_dir, str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
-del out
+#test masking from the original image into our generated one
+startFrame = 0
+endFrame = 0
+modLen = 100
 
+endFrame = startFrame + modLen
+# mask from original image
+maskMod = ImageMods.OriginalImageMask(genJob, startIt=startFrame, endIt=endFrame, freq=3, maskPath= './examples/image-mask-square-invert.png')
+genJob.AddImageMod(maskMod)
+
+startFrame = endFrame + 1
+endFrame = startFrame + modLen
+#rot
+rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
+genJob.AddImageMod(rotMod)
+
+startFrame = endFrame + 1
+endFrame = startFrame + modLen
+#rot back
+rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
+genJob.AddImageMod(rotMod)
+
+startFrame = endFrame + 1
+endFrame = startFrame + modLen
+#image zoomer
+zoomMod = ImageMods.ImageZoomer(genJob, startIt=startFrame, endIt=endFrame, freq = 10, zoom_scale = 1.05)
+genJob.AddImageMod(zoomMod)
+
+startFrame = endFrame + 1
+endFrame = startFrame + modLen
+#rot
+rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
+genJob.AddImageMod(rotMod)
+
+startFrame = endFrame + 1
+endFrame = startFrame + modLen
+#rot back
+rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
+genJob.AddImageMod(rotMod)
+
+
+#genJob2 = hallucinatorInst.CreateNewGenerationJob(argsCopy)
 
 iteration = 0 # Iteration counter
 phraseCounter = 1 # Phrase counter
 
 
-sys.stdout.flush()
+# Do it
+curJob = genJob
+#curJob.Initialize()
 
-# clean up random junk before we start
+# write out the input noise...
+out = curJob.GerCurrentImageAsPIL()
+info = PngImagePlugin.PngInfo()
+info.add_text('comment', f'{cmdLineArgs.args.prompts}')
+out.save( build_filename_path( cmdLineArgs.args.output_dir, str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
+del out
+
+# clean, flush, and go
+sys.stdout.flush()
 gc.collect()
 
-# Do it
 try:
     with tqdm() as pbar:
-        while True:            
+        while True:                        
 
             # Change text prompt
             if cmdLineArgs.args.prompt_frequency > 0:
@@ -218,19 +268,19 @@ try:
                     phraseCounter += 1
             
             #image manipulations before training is called, such as the zoom effect
-            hallucinatorInst.OnPreTrain(genJob, iteration)
+            hallucinatorInst.OnPreTrain(curJob, iteration)
 
             # Training time
-            train(genJob, iteration)
+            train(curJob, iteration)
            
             
             # Ready to stop yet?
             if iteration == cmdLineArgs.args.max_iterations:
 
-                hallucinatorInst.OnFinishGeneration(genJob, iteration)
+                hallucinatorInst.OnFinishGeneration(curJob, iteration)               
 
                 # Save final image
-                out = genJob.GetCurrentImageSynthed()                                  
+                out = hallucinatorInst.GetCurrentImageSynthed(curJob)                                  
                 img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
                 img = np.transpose(img, (1, 2, 0))
                 imageio.imwrite(build_filename_path(cmdLineArgs.args.output_dir, cmdLineArgs.args.output), np.array(img))                
@@ -245,6 +295,20 @@ try:
                     sys.stdout = sys.stdout 
                     text_file.close()
 
+                #if curJob == genJob:
+                #    input("Press Enter to continue...")
+                #    curJob = genJob2
+                #    #curJob.Initialize()
+
+                #    out = curJob.GerCurrentImageAsPIL()
+                #    info = PngImagePlugin.PngInfo()
+                #    info.add_text('comment', f'{cmdLineArgs.args.prompts}')
+                #    out.save( build_filename_path( cmdLineArgs.args.output_dir, str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
+                #    del out                    
+
+                #    iteration = 0
+                    
+                #else:
                 break
 
 

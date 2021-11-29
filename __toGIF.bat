@@ -1,24 +1,33 @@
 REM ffmpeg -f image2 -framerate 1 -i simpimgs%03d.jpg -loop -1 simpson.gif
 
-REM scale filters: scale=iw*0.5:ih*0.5
-SET /A framerate=24
+set START_FRAME=-start_number 15
+
+REM frameratestuff
+SET /A INTERPOLATE_TO_FRAMERATE=48
+SET /A framerate=48
 SET compressedFramerate=fps=14
 
-REM scale by half
-SET filters=scale=iw*0.5:ih*0.5
+
+REM scale
+SET filters=scale=iw:ih
+REM SET filters=scale=iw*0.5:ih*0.5
 REM SET filters=scale=300:300
 REM SET filters=scale='min(512,iw)':'min(512,ih)'
 
+REM motion interpolated frames
+REM SET filters=%filters%,minterpolate=fps=%INTERPOLATE_TO_FRAMERATE%:mi_mode=blend
+REM SET filters=%filters%,minterpolate=fps=%INTERPOLATE_TO_FRAMERATE%:mi_mode=mci
+
 SET MAKE_GIF=1
-SET MAKE_COMPRESSED_GIF=1
-SET MAKE_MP4=0
+SET MAKE_COMPRESSED_GIF=0
+SET MAKE_MP4=1
 
 
 cd output
 
 if %MAKE_GIF% == 1 (
 	REM uncompressed gif
-	D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 -framerate %framerate% -lavfi "%filters%" -i %%05doutput.png -y __output.gif
+	D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 %START_FRAME% -framerate %framerate% -lavfi "%filters%" -i %%05doutput.png -y __output.gif
 )
 
 if %MAKE_COMPRESSED_GIF% == 1 (

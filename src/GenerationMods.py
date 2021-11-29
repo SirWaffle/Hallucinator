@@ -4,36 +4,26 @@
 
 import abc
 from enum import Enum, auto
-import Hallucinator
 import imageUtils
-import GenerateJob
-import sys
-import os
-import random
 import numpy as np
 
-import makeCutouts
 import imageUtils
 
 import torch
 from torch.nn import functional as F
-from torchvision import transforms
 from torchvision.transforms import functional as TF
-from torch.cuda import get_device_properties
-import imageio
 
-from PIL import ImageFile, Image, PngImagePlugin, ImageChops
+from PIL import ImageFile, Image, ImageChops
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
  
 
-class ImageModStage(Enum):
+class GenerationModStage(Enum):
     PreTrain = auto() #pretraining step, mods happen before the next training step
     FinishedGeneration = auto() #happens when the generation of the image is finished
 
 
-
-class IImageMod(metaclass=abc.ABCMeta):
+class IGenerationMod(metaclass=abc.ABCMeta):
 
     @classmethod
     def __subclasshook__(cls, subclass):
@@ -43,25 +33,17 @@ class IImageMod(metaclass=abc.ABCMeta):
                 callable(subclass.OnPreTrain) or 
                 NotImplemented)
 
-    def __init__(self, GenJob, startIt: int = 0, endIt: int = 9999999999, freq: int = 10):
+    def __init__(self, GenJob):
         super().__init__()
 
         self.GenJob = GenJob        
-        self.freq = freq
-        self.startIt = startIt
-        self.endIt = endIt
 
     @abc.abstractmethod
     def Initialize(self):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def ShouldApply(self, stage: ImageModStage, iteration: int ) -> bool:
-        return self.IsIterationInRange(iteration) and iteration % self.freq == 0
-
-    def IsIterationInRange(self, iteration: int) -> bool:
-        if iteration < self.startIt or iteration >self.endIt:
-            return False 
+    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
         return True
 
     @abc.abstractmethod
@@ -70,13 +52,33 @@ class IImageMod(metaclass=abc.ABCMeta):
 
 
 
+class GenerationModContainer:
+    def __init__(self, mod:IGenerationMod, startIt: int = 0, endIt: int = 9999999999, freq: int = 10):
+        self.freq = freq
+        self.startIt = startIt
+        self.endIt = endIt
+        self.mod = mod
+
+    def IsIterationInRange(self, iteration: int) -> bool:
+        if iteration < self.startIt or iteration > self.endIt:
+            return False 
+        return True
+
+    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
+        if self.mod.ShouldApply(stage, iteration):
+            return self.IsIterationInRange(iteration) and iteration % self.freq == 0
+        return False
+
+    def OnPreTrain(self, iteration: int ):
+        self.mod.OnPreTrain(iteration)
 
 
 
-class OriginalImageMask(IImageMod):
 
-    def __init__(self, GenJob, startIt: int = 0, endIt: int = 9999999999, freq: int = 10, maskPath: str = ''):
-        super().__init__(GenJob, startIt, endIt, freq)
+class OriginalImageMask(IGenerationMod):
+
+    def __init__(self, GenJob, maskPath: str = ''):
+        super().__init__(GenJob)
 
         self.maskPath = maskPath
         self.original_image_tensor = None
@@ -100,16 +102,15 @@ class OriginalImageMask(IImageMod):
         self.image_mask_tensor = torch.logical_not( self.image_mask_tensor_invert )
 
 
-    def ShouldApply(self, stage: ImageModStage, iteration: int ) -> bool:
-        if stage.value != ImageModStage.PreTrain.value:
+    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
+        if stage.value != GenerationModStage.PreTrain.value:
             return False
-
-        return super().ShouldApply(stage, iteration)
+        return True
 
 
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            curQuantImg = self.GenJob.synth(self.GenJob.quantizedImage, self.GenJob.vqganGumbelEnabled)
+            curQuantImg = self.GenJob.synth()
 
             #this removes the first dim sized 1 to match the rest
             curQuantImg = torch.squeeze(curQuantImg)
@@ -130,10 +131,10 @@ class OriginalImageMask(IImageMod):
 
 
 # from original inmplementation of image zoom from nerdyRodent
-class ImageZoomer(IImageMod):
+class ImageZoomer(IGenerationMod):
     #fucking python has no maxint to use as a large value, annoying
-    def __init__(self, GenJob, startIt: int = 0, endIt: int = 9999999999, freq: int = 10, zoom_scale: float = 0.99, zoom_shift_x: int = 0, zoom_shift_y: int = 0):
-        super().__init__(GenJob, startIt, endIt, freq)
+    def __init__(self, GenJob,zoom_scale: float = 0.99, zoom_shift_x: int = 0, zoom_shift_y: int = 0):
+        super().__init__(GenJob)
 
         ##need to make these configurable
         self.zoom_scale = zoom_scale
@@ -144,16 +145,15 @@ class ImageZoomer(IImageMod):
         pass
 
 
-    def ShouldApply(self, stage: ImageModStage, iteration: int ) -> bool:
-        if stage.value != ImageModStage.PreTrain.value:
+    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
+        if stage.value != GenerationModStage.PreTrain.value:
             return False
-
-        return super().ShouldApply(stage, iteration)
+        return True
 
 
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            out = self.GenJob.synth(self.GenJob.quantizedImage, self.GenJob.vqganGumbelEnabled)
+            out = self.GenJob.synth()
             
             # Save image
             img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
@@ -185,10 +185,10 @@ class ImageZoomer(IImageMod):
 
 
 # faster tensor based image zoomer, but only zooms in for now
-class ImageZoomInFast(IImageMod):
+class ImageZoomInFast(IGenerationMod):
     #fucking python has no maxint to use as a large value, annoying
-    def __init__(self, GenJob, startIt: int = 0, endIt: int = 9999999999, freq: int = 10, zoom_scale: float = 1.02, normalizedZoomPointX: float = 0.5, normalizedZoomPointY: float = 0.5):
-        super().__init__(GenJob, startIt, endIt, freq)
+    def __init__(self, GenJob, zoom_scale: float = 1.02, normalizedZoomPointX: float = 0.5, normalizedZoomPointY: float = 0.5):
+        super().__init__(GenJob)
 
         ##need to make these configurable
         self.zoom_scale = zoom_scale
@@ -202,16 +202,15 @@ class ImageZoomInFast(IImageMod):
         pass
 
 
-    def ShouldApply(self, stage: ImageModStage, iteration: int ) -> bool:
-        if stage.value != ImageModStage.PreTrain.value:
+    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
+        if stage.value != GenerationModStage.PreTrain.value:
             return False
-
-        return super().ShouldApply(stage, iteration)
+        return True
 
 
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            imgTensor = self.GenJob.synth(self.GenJob.quantizedImage, self.GenJob.vqganGumbelEnabled)
+            imgTensor = self.GenJob.synth()
 
             n, c, h, w = imgTensor.shape
 
@@ -243,10 +242,9 @@ class ImageZoomInFast(IImageMod):
 
 
 
-class ImageRotate(IImageMod):
-    #fucking python has no maxint to use as a large value, annoying
-    def __init__(self, GenJob, startIt: int = 0, endIt: int = 9999999999, freq: int = 10, angle: int = 1):
-        super().__init__(GenJob, startIt, endIt, freq)
+class ImageRotate(IGenerationMod):
+    def __init__(self, GenJob, angle: int = 1):
+        super().__init__(GenJob)
 
         self.angle = angle
 
@@ -254,16 +252,15 @@ class ImageRotate(IImageMod):
         pass
 
 
-    def ShouldApply(self, stage: ImageModStage, iteration: int ) -> bool:
-        if stage.value != ImageModStage.PreTrain.value:
+    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
+        if stage.value != GenerationModStage.PreTrain.value:
             return False
-
-        return super().ShouldApply(stage, iteration)
+        return True
 
 
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            curQuantImg = self.GenJob.synth(self.GenJob.quantizedImage, self.GenJob.vqganGumbelEnabled)
+            curQuantImg = self.GenJob.synth()
 
             #this removes the first dim sized 1 to match the rest
             curQuantImg = torch.squeeze(curQuantImg)
@@ -276,3 +273,28 @@ class ImageRotate(IImageMod):
         
         self.GenJob.quantizedImage.requires_grad_(True)
         self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.config.optimiser, self.GenJob.config.step_size)                
+
+
+
+class ChangePromptMod(IGenerationMod):
+    def __init__(self, GenJob, prompt:str, clearOtherPrompts:bool = True):
+        super().__init__(GenJob)
+
+        self.prompt = prompt
+        self.clearOtherPrompts = clearOtherPrompts
+
+    def Initialize(self):
+        pass
+
+
+    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
+        if stage.value != GenerationModStage.PreTrain.value:
+            return False
+        return True
+
+
+    def OnPreTrain(self, iteration: int ):
+        if self.clearOtherPrompts == True:
+            self.GenJob.embededPrompts = []
+
+        self.GenJob.EmbedTextPrompt(self.prompt)               

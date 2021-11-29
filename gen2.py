@@ -14,7 +14,7 @@ from src import cmdLineArgs
 cmdLineArgs.init()
 
 from src import Hallucinator
-from src import ImageMods
+from src import GenerationMods
 from src import GenerateJob
 
 import gc
@@ -43,10 +43,13 @@ def checkin(i, losses, out):
     print("*************************************************")
 
     promptNum = 0
-    if cmdLineArgs.args.prompts and cmdLineArgs.args.use_spatial_prompts == False:
-        for loss in losses:
+    lossLen = len(losses)
+    if cmdLineArgs.args.prompts and lossLen <= len(cmdLineArgs.args.prompts):
+        for loss in losses:            
             print( "----> " + cmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
             promptNum += 1
+    else:
+        print("mismatch in prompt numbers and losses!")
 
     print(" ")
 
@@ -160,63 +163,80 @@ hallucinatorInst.Initialize()
 
 genJob = hallucinatorInst.CreateNewGenerationJob(cmdLineArgs.args)
 
-doMods = True
+doMods = False
+doMods2 = True
+
+if doMods2 == True:
+    zoomMod = GenerationMods.ImageZoomInFast(genJob, zoom_scale = 1.04)
+    nextStartFrame = genJob.AddGenerationMod(zoomMod, 0, 2000, 10)
+
+    promptMod = GenerationMods.ChangePromptMod(genJob, "beautiful waves of time in a sea detailed painting colorful")
+    nextStartFrame = genJob.AddGenerationMod(promptMod, 0, 0, 1)
+
+    promptMod = GenerationMods.ChangePromptMod(genJob, "gustave dore demon faces oil painting")
+    nextStartFrame = genJob.AddGenerationMod(promptMod, 400, 0, 1)
+
+    promptMod = GenerationMods.ChangePromptMod(genJob, "psychadelic landscape of bones illustrated")
+    nextStartFrame = genJob.AddGenerationMod(promptMod, 800, 0, 1)
+
+    promptMod = GenerationMods.ChangePromptMod(genJob, "beksinski teeth evil tumor blood detailed painting")
+    nextStartFrame = genJob.AddGenerationMod(promptMod, 1200, 0, 1)
+
+    promptMod = GenerationMods.ChangePromptMod(genJob, "crystal skull colorful x-particles octane 4k HDR")
+    nextStartFrame = genJob.AddGenerationMod(promptMod, 1600, 0, 1)
 
 if doMods == True:
     #test masking from the original image into our generated one
-    startFrame = 0
-    endFrame = 0
+    nextStartFrame = 0
     modLen = 1000
 
     #endFrame = startFrame + modLen
     # mask from original image
-    #maskMod = ImageMods.OriginalImageMask(genJob, startIt=startFrame, endIt=endFrame, freq=3, maskPath= './examples/image-mask-square-invert.png')
+    #maskMod = GenerationMods.OriginalImageMask(genJob, startIt=startFrame, endIt=endFrame, freq=3, maskPath= './examples/image-mask-square-invert.png')
     #genJob.AddImageMod(maskMod)
 
     #startFrame = endFrame + 1
     #endFrame = startFrame + modLen
     #rot
-    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
+    #rotMod = GenerationMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
     #genJob.AddImageMod(rotMod)
 
     #startFrame = endFrame + 1
     #endFrame = startFrame + modLen
     #rot back
-    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
+    #rotMod = GenerationMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
     #genJob.AddImageMod(rotMod)
 
-    startFrame = endFrame + 1
-    endFrame = startFrame + modLen
     #image zoomer
-    #zoomMod = ImageMods.ImageZoomer(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.02)
-    zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04)
-    genJob.AddImageMod(zoomMod)
+    #zoomMod = GenerationMods.ImageZoomer(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.02)
+    zoomMod = GenerationMods.ImageZoomInFast(genJob, zoom_scale = 1.04)
+    nextStartFrame = genJob.AddGenerationMod(zoomMod, nextStartFrame, modLen, 5)
 
     #startFrame = endFrame + 1
     #endFrame = startFrame + modLen
-    #zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04, normalizedZoomPointX=0, normalizedZoomPointY=0)
+    #zoomMod = GenerationMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04, normalizedZoomPointX=0, normalizedZoomPointY=0)
     #genJob.AddImageMod(zoomMod)
 
     #startFrame = endFrame + 1
     #endFrame = startFrame + modLen
-    #zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04)
+    #zoomMod = GenerationMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04)
     #genJob.AddImageMod(zoomMod)
 
     #startFrame = endFrame + 1
     #endFrame = startFrame + modLen
-    #zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04, normalizedZoomPointX=1, normalizedZoomPointY=1)
+    #zoomMod = GenerationMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04, normalizedZoomPointX=1, normalizedZoomPointY=1)
     #genJob.AddImageMod(zoomMod)
 
     #startFrame = endFrame + 1
     #endFrame = startFrame + modLen
     #rot
-    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
+    #rotMod = GenerationMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
     #genJob.AddImageMod(rotMod)
 
     #startFrame = endFrame + 1
     #endFrame = startFrame + modLen
     #rot back
-    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
+    #rotMod = GenerationMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
     #genJob.AddImageMod(rotMod)
 
 

@@ -6,7 +6,7 @@ import numpy as np
 
 # shut off tqdm log spam by uncommenting the below
 from tqdm import tqdm
-import ImageMods
+import GenerationMods
 # from functools import partialmethod
 # tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
@@ -124,7 +124,7 @@ class Hallucinator:
     ########################
     ## jobs and commands
     ########################
-    def CreateNewGenerationJob(self, settings):
+    def CreateNewGenerationJob(self, settings) -> GenerateJob.GenerationJob:
         newJob = GenerateJob.GenerationJob(self, settings)
         newJob.Initialize()
         return newJob
@@ -148,21 +148,21 @@ class Hallucinator:
     ##############
     ##  Getters and converters
     ##############
-    def GerCurrentImageAsPIL(self, genJob):
+    def GerCurrentImageAsPIL(self, genJob:GenerateJob.GenerationJob) -> torch.Tensor:
         out = self.synth(genJob.quantizedImage, genJob.vqganGumbelEnabled)
         return TF.to_pil_image(out[0].cpu())
 
-    def GetCurrentImageSynthed(self, genJob):
+    def GetCurrentImageSynthed(self, genJob:GenerateJob.GenerationJob) -> torch.Tensor:
         return self.synth( genJob.quantizedImage, genJob.vqganGumbelEnabled)
 
-    def ConvertToPIL(self, synthedImage):
+    def ConvertToPIL(self, synthedImage:torch.Tensor):
         return TF.to_pil_image(synthedImage[0].cpu())
 
 
     ##################
     ### Logging and other internal helper methods...
     ##################
-    def seed_torch(self, seed=42):
+    def seed_torch(self, seed:int=42):
         random.seed(seed)
         os.environ['PYTHONHASHSEED'] = str(seed)
         np.random.seed(seed % (2**32 - 1))
@@ -170,7 +170,7 @@ class Hallucinator:
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
 
-    def log_torch_mem(self, title = ''):
+    def log_torch_mem(self, title:str = ''):
         t = torch.cuda.get_device_properties(0).total_memory
         r = torch.cuda.memory_reserved(0)
         a = torch.cuda.memory_allocated(0)
@@ -191,13 +191,13 @@ class Hallucinator:
     ###################
     # Vector quantize
     ###################
-    def vector_quantize(self, x, codebook):
+    def vector_quantize(self, x, codebook) -> torch.Tensor:
         d = x.pow(2).sum(dim=-1, keepdim=True) + codebook.pow(2).sum(dim=1) - 2 * x @ codebook.T
         indices = d.argmin(-1)
         x_q = F.one_hot(indices, codebook.shape[0]).to(d.dtype) @ codebook
         return replace_grad(x_q, x)
 
-    def synth(self, z, gumbelMode):
+    def synth(self, z, gumbelMode) -> torch.Tensor:
         if gumbelMode:
             z_q = self.vector_quantize(z.movedim(1, 3), self.vqganModel.quantize.embed.weight).movedim(3, 1)
         else:
@@ -209,7 +209,7 @@ class Hallucinator:
     ########################
     # get the optimiser ###
     ########################
-    def get_optimiser(self, quantizedImg, opt_name, opt_lr):
+    def get_optimiser(self, quantizedImg:torch.Tensor, opt_name:str, opt_lr:float):
 
         # from nerdy project, potential learning rate tweaks?
         # Messing with learning rate / optimisers
@@ -243,7 +243,7 @@ class Hallucinator:
     ###################
     ##  Get an instance of the cutout we are goign to use
     ###################
-    def GetMakeCutouts( self, clipPerceptorInputResolution ):
+    def GetMakeCutouts( self, clipPerceptorInputResolution:int ):
         # Cutout class options:
         # 'squish', 'latest','original','updated' or 'updatedpooling'
         if self.config.cut_method == 'latest':
@@ -435,7 +435,7 @@ class Hallucinator:
     ## clip one shot analysis, just for fun, probably done wrong
     ###############################
     @torch.inference_mode()
-    def WriteLogClipResults(self, imgout):
+    def WriteLogClipResults(self, imgout:torch.Tensor):
         #TODO properly manage initing the cifar100 stuff here if its not already
 
         img = self.normalize(self.CurrentCutoutMethod(imgout))
@@ -506,7 +506,7 @@ class Hallucinator:
     ### interactive generation steps and training
     ######################
 
-    def ProcessJobFull(self, genJob, trainCallback):
+    def ProcessJobFull(self, genJob:GenerateJob.GenerationJob, trainCallback = None):
         moreWork = True
         with tqdm() as pbar:
             while moreWork:   
@@ -517,13 +517,13 @@ class Hallucinator:
 
 
     # step a job, returns true if theres more processing left for it
-    def ProcessJobStep(self, genJob, trainCallbackFunc = None) -> bool:
+    def ProcessJobStep(self, genJob:GenerateJob.GenerationJob, trainCallbackFunc = None) -> bool:
         # Change text prompt
         if genJob.config.prompt_frequency > 0:
             if genJob.currentIteration % genJob.config.prompt_frequency == 0 and genJob.currentIteration > 0:
                 # In case there aren't enough phrases, just loop
                 if genJob.phraseCounter >= len(self.all_phrases):
-                    phraseCounter = 0
+                    genJob.phraseCounter = 0
                 
                 pMs = []
                 self.config.prompts = self.all_phrases[genJob.phraseCounter]
@@ -532,7 +532,7 @@ class Hallucinator:
                 print(self.config.prompts)
                 
                 for prompt in self.config.prompts:
-                    self.EmbedTextPrompt(prompt)
+                    genJob.EmbedTextPrompt(prompt)
 
                 genJob.phraseCounter += 1
         
@@ -555,7 +555,7 @@ class Hallucinator:
 
 
 
-    def ascend_txt(self, genJob, iteration, synthedImage):
+    def ascend_txt(self, genJob:GenerateJob.GenerationJob, iteration:int, synthedImage:torch.Tensor):
         with torch.cuda.amp.autocast(self.config.use_mixed_precision):
 
             cutouts = genJob.GetCutouts(synthedImage)
@@ -571,7 +571,7 @@ class Hallucinator:
             return result # return loss
 
 
-    def train(self, genJob, iteration):
+    def train(self, genJob:GenerateJob.GenerationJob, iteration:int):
         with torch.cuda.amp.autocast(self.config.use_mixed_precision):
             genJob.optimiser.zero_grad(set_to_none=True)
             
@@ -608,14 +608,14 @@ class Hallucinator:
     ### do manipulations to the image sent to vqgan prior to training steps
     ### for example, image mask lock, or the image zooming effect
     #########################
-    def OnPreTrain(self, genJob, iteration):
-        for mod in genJob.ImageModifiers:
-            if mod.ShouldApply( ImageMods.ImageModStage.PreTrain, iteration ):
-                mod.OnPreTrain( iteration )
+    def OnPreTrain(self, genJob:GenerateJob.GenerationJob, iteration:int):
+        for modContainer in genJob.ImageModifiers:
+            if modContainer.ShouldApply( GenerationMods.GenerationModStage.PreTrain, iteration ):
+                modContainer.OnPreTrain( iteration )
 
-    def OnFinishGeneration(self, genJob, iteration):
-        for mod in genJob.ImageModifiers:
-            if mod.ShouldApply( ImageMods.ImageModStage.FinishedGeneration, iteration ):
-                mod.OnPreTrain( iteration )
+    def OnFinishGeneration(self, genJob:GenerateJob.GenerationJob, iteration:int):
+        for modContainer in genJob.ImageModifiers:
+            if modContainer.ShouldApply( GenerationMods.GenerationModStage.FinishedGeneration, iteration ):
+                modContainer.OnPreTrain( iteration )
 
     

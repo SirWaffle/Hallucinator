@@ -6,14 +6,13 @@ import numpy as np
 
 # shut off tqdm log spam by uncommenting the below
 from tqdm import tqdm
-import Hallucinator
 # from functools import partialmethod
 # tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
 import makeCutouts
 import imageUtils
-import ImageMods
-
+import GenerationMods
+#import Hallucinator #circular reference in imports...
 
 #stuff im using from source instead of installs
 # i want to run clip from source, not an install. I have clip in a dir alongside this project
@@ -111,7 +110,7 @@ def split_prompt(prompt):
 class GenerationJob:
     # TODO: dont use argparse args, use a config / json / something
     # using argparseargs for now due to being in the middle of a refactor
-    def __init__(self, hallucinatorInst: Hallucinator, argparseArgs ):
+    def __init__(self, hallucinatorInst, argparseArgs ):
         ### this will define all classwide member variables, so its easy to see
         ## should really convert this to something that is more explicit, but that will come later
         self.config = argparseArgs
@@ -185,10 +184,24 @@ class GenerationJob:
     ####################
     ### Image modifier stuff
     ####################
-    def AddImageMod(self, mod):   
+
+    # method that uses the previous mod's end frame to set the start frame
+    def AppendGenerationMod(self, mod:GenerationMods.IGenerationMod, numberOfIts: int, freq: int) -> int: 
+        startFrame = 0
+        modLen = len(self.ImageModifiers)
+        if modLen > 0:
+            startFrame = self.ImageModifiers[modLen -1].endIt + 1
+        return self.AddGenerationMod(mod, startFrame, numberOfIts, freq)
+
+    # add a new mod, and return the next frame after it
+    def AddGenerationMod(self, mod:GenerationMods.IGenerationMod, startIt: int, numberOfIts: int, freq: int) -> int:   
         print('Initializing modifier: ' + str(mod))
-        mod.Initialize()             
-        self.ImageModifiers.append(mod)
+        mod.Initialize()   
+
+        endIt = startIt + numberOfIts
+        modContainer = GenerationMods.GenerationModContainer(mod, startIt, endIt, freq)
+        self.ImageModifiers.append(modContainer)
+        return endIt + 1
 
     def OnPreTrain(self):
         pass
@@ -390,7 +403,7 @@ class GenerationJob:
     ##############
     ##  Getters and converters
     ##############
-    def synth(self, z, gumbelMode):
+    def synth(self):
         return self.hallucinatorInst.synth( self.quantizedImage, self.vqganGumbelEnabled)
 
     def GerCurrentImageAsPIL(self):
@@ -539,7 +552,7 @@ class GenerationJob:
         return cutouts  
 
 
-    def GetCutoutResults(self, clipEncodedImage, iteration):
+    def GetCutoutResults(self, clipEncodedImage, iteration:int):
         result = [] 
 
         if self.config.init_weight:

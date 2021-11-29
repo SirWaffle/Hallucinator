@@ -89,11 +89,12 @@ def checkin(i, losses, out):
 
 
 
-
+savedImageCount = 0
 bestErrorScore = 99999
 def train(genJob, i):
     global bestErrorScore
-      
+    global savedImageCount
+
     out, lossAll, lossSum = hallucinatorInst.train(genJob, i)
 
     # stat updates and progress images
@@ -101,10 +102,15 @@ def train(genJob, i):
         if i % cmdLineArgs.args.display_freq == 0:
             checkin(i, lossAll, out)  
 
-        if i % cmdLineArgs.args.save_freq == 0:          
+        if i % cmdLineArgs.args.save_freq == 0:     
+            if cmdLineArgs.args.save_seq == False:
+                savedImageCount = i
+            else:
+                savedImageCount = savedImageCount + 1
+
             info = PngImagePlugin.PngInfo()
             info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            hallucinatorInst.ConvertToPIL(out).save( build_filename_path( cmdLineArgs.args.output_dir, str(i).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
+            hallucinatorInst.ConvertToPIL(out).save( build_filename_path( cmdLineArgs.args.output_dir, str(savedImageCount).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
                             
         if cmdLineArgs.args.save_best == True:
 

@@ -1,22 +1,39 @@
 REM ffmpeg -f image2 -framerate 1 -i simpimgs%03d.jpg -loop -1 simpson.gif
+
+REM scale filters: scale=iw*0.5:ih*0.5
+SET /A framerate=24
+SET compressedFramerate=fps=14
+
+REM scale by half
+SET filters=scale=iw*0.5:ih*0.5
+REM SET filters=scale=300:300
+REM SET filters=scale='min(512,iw)':'min(512,ih)'
+
+SET MAKE_GIF=1
+SET MAKE_COMPRESSED_GIF=1
+SET MAKE_MP4=0
+
+
 cd output
-REM D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 -framerate 2 -pattern_type glob -i './output/*.png' ./output.gif
 
-REM !/bin/sh
-REM palette="/tmp/palette.png"
-REM filters="fps=15,scale=320:-1:flags=lanczos"
-REM ffmpeg -v warning -i $1 -vf "$filters,palettegen=stats_mode=diff" -y $palette
-REM ffmpeg -i $1 -i $palette -lavfi "$filters,paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" -y $2
+if %MAKE_GIF% == 1 (
+	REM uncompressed gif
+	D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 -framerate %framerate% -lavfi "%filters%" -i %%05doutput.png -y __output.gif
+)
 
-D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 -framerate 10 -i %%05doutput.png __output.gif
+if %MAKE_COMPRESSED_GIF% == 1 (
+	REM lets try with pallete gen gif
+	REM D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 -i %%05doutput.png -vf "palettegen=stats_mode=diff" -y __palette.png
+	REM D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 -framerate %framerate%  -i %%05doutput.png -i __palette.png -lavfi "%filters%,fps=12,paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" -y __outputPalette.gif
+	
+	REM just use a lower framerate for now
+	D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -f image2 -framerate %framerate% -lavfi "%filters%,%compressedFramerate%" -i %%05doutput.png -y __outputLowFR.gif
+)
 
+if %MAKE_MP4% == 1 (
+	REM or video
+	D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -framerate %framerate% -lavfi "%filters%" -i %%05doutput.png -c:v libx264 -y __output.mp4
+)
 
-REM or video
-REM ffmpeg -framerate 1/2 -i img%04d.png -c:v libx264 -r 30 out.mp4
-
-REM resulted in blackscreen
-D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -framerate 30 -i %%05doutput.png -c:v libx264 __output.mp4
-
-REM D:\Programming\generativeArt\ffmpeg\bin\ffmpeg.exe -framerate 30 -pix_fmt yuv420p -i %%05doutput.png __output.mp4
 
 PAUSE

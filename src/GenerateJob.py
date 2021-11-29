@@ -117,6 +117,12 @@ class GenerationJob:
         self.config = argparseArgs
         self.hallucinatorInst = hallucinatorInst
 
+        ## public vars, is there a better way to do this in python?
+        self.totalIterations = self.config.max_iterations
+        self.currentIteration = 0 
+        self.phraseCounter = 0 #phrase counter stuff from old project...
+
+
         ## maybe not best for logn run, but get ref's to some things that are heavily used from hallucinator
         self.clipPerceptorInputResolution = hallucinatorInst.clipPerceptorInputResolution
         self.clipPerceptor = hallucinatorInst.clipPerceptor
@@ -487,3 +493,64 @@ class GenerationJob:
             self.original_quantizedImage = self.quantizedImage.detach() #was clone() and setting grad to false befopre
 
         self.quantizedImage.requires_grad_(True)
+
+
+
+    def GetCutouts(self, synthedImage):
+        cutouts, cutout_coords = self.CurrentCutoutMethod(synthedImage)
+
+        # attempt masking stuff
+        if self.config.use_spatial_prompts:
+            cutouts_detached = cutouts.detach() #used to prevent gradient for unmask parts
+            if self.blur_conv is not None:
+                #Get the "blindfolded" image by blurring then addimg more noise
+                facs = cutouts.new_empty([cutouts.size(0), 1, 1, 1]).uniform_(0, self.noise_fac)
+                cutouts_blurred = self.blur_conv(cutouts_detached)+ facs * torch.randn_like(cutouts_detached)
+
+
+            cut_size = self.config.cut_size
+
+            #get mask patches
+            cutout_prompt_masks = []
+            for (x1,x2,y1,y2) in cutout_coords:
+                cutout_mask = self.prompt_masks[:,:,y1:y2,x1:x2]
+                cutout_mask = makeCutouts.resample(cutout_mask, (cut_size[0], cut_size[1]))
+                cutout_prompt_masks.append(cutout_mask)
+            cutout_prompt_masks = torch.stack(cutout_prompt_masks,dim=1) #-> prompts X cutouts X color X H X W
+            
+            #apply each prompt, masking gradients
+            prompts_gradient_masked_cutouts = []
+            for idx,prompt in enumerate(self.embededPrompts):
+                keep_mask = cutout_prompt_masks[idx] #-> cutouts X color X H X W
+                #only apply this prompt if one image has a (big enough) part of mask
+                if keep_mask.sum(dim=3).sum(dim=2).max()> cut_size[0]*2: #todo, change this
+                    
+                    block_mask = 1-keep_mask
+
+                    #compose cutout of gradient and non-gradient parts
+                    if self.blindfold[idx] and ((not isinstance(self.blindfold[idx],float)) or self.blindfold[idx]>random.random()):
+                        gradient_masked_cutouts = keep_mask*cutouts + block_mask*cutouts_blurred
+                    else:
+                        gradient_masked_cutouts = keep_mask*cutouts + block_mask*cutouts_detached
+
+                    prompts_gradient_masked_cutouts.append(gradient_masked_cutouts)
+            cutouts = torch.cat(prompts_gradient_masked_cutouts,dim=0)    
+
+        return cutouts  
+
+
+    def GetCutoutResults(self, clipEncodedImage, iteration):
+        result = [] 
+
+        if self.config.init_weight:
+            # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
+            result.append(F.mse_loss(self.quantizedImage, torch.zeros_like(self.original_quantizedImage)) * ((1/torch.tensor(iteration*2 + 1))*self.config.init_weight) / 2)
+
+        if self.config.use_spatial_prompts:
+            for prompt_masked_iii,prompt in zip(torch.chunk(clipEncodedImage,self.num_prompts,dim=0),self.embededPrompts):
+                result.append(prompt(prompt_masked_iii))
+        else:
+            for prompt in self.embededPrompts:
+                result.append(prompt(clipEncodedImage))      
+
+        return result

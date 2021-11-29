@@ -53,10 +53,11 @@ def init():
     vq_parser.add_argument("-cutsize",    "--cut_size", nargs=2, type=int, help="Cut size (width height) (clip controlled)", default=[0,0], dest='cut_size')
 
     # manage output files and other logged data 
-    vq_parser.add_argument("-od",   "--output_dir", type=str, help="Output filename", default="./output/", dest='output_dir')
-    vq_parser.add_argument("-o",    "--output", type=str, help="Output filename", default="output.png", dest='output')    
-    vq_parser.add_argument("-se",   "--save_every", type=int, help="Save image iterations", default=50, dest='save_freq')
-    vq_parser.add_argument("-sb",   "--save_best", help="Save the best scored image", action='store_true', dest='save_best')
+    vq_parser.add_argument("--output_dir", type=str, help="Output filename", default="./output/", dest='output_dir')
+    vq_parser.add_argument("--output", type=str, help="Output filename", default="output.png", dest='output')    
+    vq_parser.add_argument("--save_every", type=int, help="Save image iterations", default=50, dest='save_freq')
+    vq_parser.add_argument("--save_seq",  help="saved images are numbered sequentially instead of by iteration number", action='store_true')
+    vq_parser.add_argument("--save_best", help="Save the best scored image", action='store_true', dest='save_best')
 
     # attempt to use mixed precision mode here
     # need to hunt down causes of the decoder produces inf's/nan's. current hack is to replace them with min/max floats, slower and produces poorer results than 32 bit.

@@ -1,37 +1,10 @@
-# new mods from various notebooks:
-#
-# inital repo:
-# https://github.com/nerdyrodent/VQGAN-CLIP
-#
-#
-# spatial masks
-# https://colab.research.google.com/drive/1B9hPy1-6qhnRL3JNusFmfyWoYvjiJ1jq?usp=sharing#scrollTo=tLw9p5Rzacso
-#
-#
-# MSE
-# https://www.reddit.com/r/bigsleep/comments/onmz5r/mse_regulized_vqgan_clip/
-# https://colab.research.google.com/drive/1gFn9u3oPOgsNzJWEFmdK-N9h_y65b8fj?usp=sharing#scrollTo=wSfISAhyPmyp
-#
-#
-# MADGRAD implementation reference
-# https://www.kaggle.com/yannnobrega/vqgan-clip-z-quantize-method
-#
-#
-# torch-optimizer info
-# https://pypi.org/project/torch-optimizer/
-#
-#
-# Originally made by Katherine Crowson (https://github.com/crowsonkb, https://twitter.com/RiversHaveWings)
-# The original BigGAN+CLIP method was by https://twitter.com/advadnoun
-
-
 import sys
 import os
 import numpy as np
 import copy
 
 # shut off tqdm log spam by uncommenting the below
-from tqdm import tqdm
+# from tqdm import tqdm
 # from functools import partialmethod
 # tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
@@ -92,22 +65,27 @@ def checkin(i, losses, out):
 
 
 
-
+savedImageCount = 0
 bestErrorScore = 99999
-def train(genJob, i):
+def trainCallback(genJob, iteration, curImg, lossAll, lossSum):
     global bestErrorScore
-      
-    out, lossAll, lossSum = hallucinatorInst.train(genJob, i)
+    global savedImageCount    
 
     # stat updates and progress images
     with torch.inference_mode():
-        if i % cmdLineArgs.args.display_freq == 0:
-            checkin(i, lossAll, out)  
+        if iteration % cmdLineArgs.args.display_freq == 0:
+            checkin(iteration, lossAll, curImg)  
 
-        if i % cmdLineArgs.args.save_freq == 0:          
+        if iteration % cmdLineArgs.args.save_freq == 0:     
+            if cmdLineArgs.args.save_seq == True:
+                savedImageCount = savedImageCount + 1                
+            else:
+                savedImageCount = iteration
+                
+
             info = PngImagePlugin.PngInfo()
             info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            hallucinatorInst.ConvertToPIL(out).save( build_filename_path( cmdLineArgs.args.output_dir, str(i).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
+            hallucinatorInst.ConvertToPIL(curImg).save( build_filename_path( cmdLineArgs.args.output_dir, str(savedImageCount).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
                             
         if cmdLineArgs.args.save_best == True:
 
@@ -118,7 +96,7 @@ def train(genJob, i):
                 bestErrorScore = lossAvg
                 info = PngImagePlugin.PngInfo()
                 info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-                hallucinatorInst.ConvertToPIL(out).save( build_filename_path( cmdLineArgs.args.output_dir, "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
+                hallucinatorInst.ConvertToPIL(curImg).save( build_filename_path( cmdLineArgs.args.output_dir, "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
 
 
 
@@ -178,56 +156,71 @@ hallucinatorInst = Hallucinator.Hallucinator(cmdLineArgs.args)
 hallucinatorInst.Initialize()
 
 
-argsCopy = copy.deepcopy(cmdLineArgs.args)
+#argsCopy = copy.deepcopy(cmdLineArgs.args)
 
 genJob = hallucinatorInst.CreateNewGenerationJob(cmdLineArgs.args)
 
-#test masking from the original image into our generated one
-startFrame = 0
-endFrame = 0
-modLen = 100
+doMods = True
 
-endFrame = startFrame + modLen
-# mask from original image
-maskMod = ImageMods.OriginalImageMask(genJob, startIt=startFrame, endIt=endFrame, freq=3, maskPath= './examples/image-mask-square-invert.png')
-genJob.AddImageMod(maskMod)
+if doMods == True:
+    #test masking from the original image into our generated one
+    startFrame = 0
+    endFrame = 0
+    modLen = 1000
 
-startFrame = endFrame + 1
-endFrame = startFrame + modLen
-#rot
-rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
-genJob.AddImageMod(rotMod)
+    #endFrame = startFrame + modLen
+    # mask from original image
+    #maskMod = ImageMods.OriginalImageMask(genJob, startIt=startFrame, endIt=endFrame, freq=3, maskPath= './examples/image-mask-square-invert.png')
+    #genJob.AddImageMod(maskMod)
 
-startFrame = endFrame + 1
-endFrame = startFrame + modLen
-#rot back
-rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
-genJob.AddImageMod(rotMod)
+    #startFrame = endFrame + 1
+    #endFrame = startFrame + modLen
+    #rot
+    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
+    #genJob.AddImageMod(rotMod)
 
-startFrame = endFrame + 1
-endFrame = startFrame + modLen
-#image zoomer
-zoomMod = ImageMods.ImageZoomer(genJob, startIt=startFrame, endIt=endFrame, freq = 10, zoom_scale = 1.05)
-genJob.AddImageMod(zoomMod)
+    #startFrame = endFrame + 1
+    #endFrame = startFrame + modLen
+    #rot back
+    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
+    #genJob.AddImageMod(rotMod)
 
-startFrame = endFrame + 1
-endFrame = startFrame + modLen
-#rot
-rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
-genJob.AddImageMod(rotMod)
+    startFrame = endFrame + 1
+    endFrame = startFrame + modLen
+    #image zoomer
+    #zoomMod = ImageMods.ImageZoomer(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.02)
+    zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04)
+    genJob.AddImageMod(zoomMod)
 
-startFrame = endFrame + 1
-endFrame = startFrame + modLen
-#rot back
-rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
-genJob.AddImageMod(rotMod)
+    #startFrame = endFrame + 1
+    #endFrame = startFrame + modLen
+    #zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04, normalizedZoomPointX=0, normalizedZoomPointY=0)
+    #genJob.AddImageMod(zoomMod)
+
+    #startFrame = endFrame + 1
+    #endFrame = startFrame + modLen
+    #zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04)
+    #genJob.AddImageMod(zoomMod)
+
+    #startFrame = endFrame + 1
+    #endFrame = startFrame + modLen
+    #zoomMod = ImageMods.ImageZoomInFast(genJob, startIt=startFrame, endIt=endFrame, freq = 5, zoom_scale = 1.04, normalizedZoomPointX=1, normalizedZoomPointY=1)
+    #genJob.AddImageMod(zoomMod)
+
+    #startFrame = endFrame + 1
+    #endFrame = startFrame + modLen
+    #rot
+    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = 10)
+    #genJob.AddImageMod(rotMod)
+
+    #startFrame = endFrame + 1
+    #endFrame = startFrame + modLen
+    #rot back
+    #rotMod = ImageMods.ImageRotate(genJob, startIt=startFrame, endIt=endFrame, freq = 10, angle = -10)
+    #genJob.AddImageMod(rotMod)
 
 
 #genJob2 = hallucinatorInst.CreateNewGenerationJob(argsCopy)
-
-iteration = 0 # Iteration counter
-phraseCounter = 1 # Phrase counter
-
 
 # Do it
 curJob = genJob
@@ -245,76 +238,21 @@ sys.stdout.flush()
 gc.collect()
 
 try:
-    with tqdm() as pbar:
-        while True:                        
+    hallucinatorInst.ProcessJobFull( curJob, trainCallback )
 
-            # Change text prompt
-            if cmdLineArgs.args.prompt_frequency > 0:
-                if iteration % cmdLineArgs.args.prompt_frequency == 0 and iteration > 0:
-                    # In case there aren't enough phrases, just loop
-                    if phraseCounter >= len(hallucinatorInst.all_phrases):
-                        phraseCounter = 0
-                    
-                    pMs = []
-                    cmdLineArgs.args.prompts = hallucinatorInst.all_phrases[phraseCounter]
+    # Save final image
+    out = curJob.GerCurrentImageAsPIL()
+    out.save( build_filename_path( cmdLineArgs.args.output_dir, cmdLineArgs.args.output ))               
 
-                    # Show user we're changing prompt                                
-                    print(cmdLineArgs.args.prompts)
-                    
-                    for prompt in cmdLineArgs.args.prompts:
-                        hallucinatorInst.EmbedTextPrompt(prompt)
-
-
-                    phraseCounter += 1
-            
-            #image manipulations before training is called, such as the zoom effect
-            hallucinatorInst.OnPreTrain(curJob, iteration)
-
-            # Training time
-            train(curJob, iteration)
-           
-            
-            # Ready to stop yet?
-            if iteration == cmdLineArgs.args.max_iterations:
-
-                hallucinatorInst.OnFinishGeneration(curJob, iteration)               
-
-                # Save final image
-                out = hallucinatorInst.GetCurrentImageSynthed(curJob)                                  
-                img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
-                img = np.transpose(img, (1, 2, 0))
-                imageio.imwrite(build_filename_path(cmdLineArgs.args.output_dir, cmdLineArgs.args.output), np.array(img))                
-
-                if cmdLineArgs.args.log_clip:    
-                    # write one for the console
-                    hallucinatorInst.WriteLogClipResults(out)
-                	#write once to a file for easy grabbing outside of this script                
-                    text_file = open(build_filename_path( cmdLineArgs.args.output_dir, cmdLineArgs.args.output + ".txt"), "w")
-                    sys.stdout = text_file
-                    hallucinatorInst.WriteLogClipResults(out)
-                    sys.stdout = sys.stdout 
-                    text_file.close()
-
-                #if curJob == genJob:
-                #    input("Press Enter to continue...")
-                #    curJob = genJob2
-                #    #curJob.Initialize()
-
-                #    out = curJob.GerCurrentImageAsPIL()
-                #    info = PngImagePlugin.PngInfo()
-                #    info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-                #    out.save( build_filename_path( cmdLineArgs.args.output_dir, str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
-                #    del out                    
-
-                #    iteration = 0
-                    
-                #else:
-                break
-
-
-
-            iteration += 1
-            pbar.update()
+    if cmdLineArgs.args.log_clip:    
+        # write one for the console
+        hallucinatorInst.WriteLogClipResults(out)
+        #write once to a file for easy grabbing outside of this script                
+        text_file = open(build_filename_path( cmdLineArgs.args.output_dir, cmdLineArgs.args.output + ".txt"), "w")
+        sys.stdout = text_file
+        hallucinatorInst.WriteLogClipResults(out)
+        sys.stdout = sys.stdout 
+        text_file.close()
 
 except KeyboardInterrupt:
     pass

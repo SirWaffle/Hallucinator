@@ -506,67 +506,67 @@ class Hallucinator:
     ### interactive generation steps and training
     ######################
 
+    def ProcessJobFull(self, genJob, trainCallback):
+        moreWork = True
+        with tqdm() as pbar:
+            while moreWork:   
+                # Training time         
+                moreWork = self.ProcessJobStep(genJob, trainCallback )
+                pbar.update()
+
+
+
+    # step a job, returns true if theres more processing left for it
+    def ProcessJobStep(self, genJob, trainCallbackFunc = None) -> bool:
+        # Change text prompt
+        if genJob.config.prompt_frequency > 0:
+            if genJob.currentIteration % genJob.config.prompt_frequency == 0 and genJob.currentIteration > 0:
+                # In case there aren't enough phrases, just loop
+                if genJob.phraseCounter >= len(self.all_phrases):
+                    phraseCounter = 0
+                
+                pMs = []
+                self.config.prompts = self.all_phrases[genJob.phraseCounter]
+
+                # Show user we're changing prompt                                
+                print(self.config.prompts)
+                
+                for prompt in self.config.prompts:
+                    self.EmbedTextPrompt(prompt)
+
+                genJob.phraseCounter += 1
+        
+        #image manipulations before training is called, such as the zoom effect
+        self.OnPreTrain(genJob, genJob.currentIteration)
+
+        # Training time
+        img, lossAll, lossSum = self.train(genJob, genJob.currentIteration)
+
+        if trainCallbackFunc != None:
+            trainCallbackFunc(genJob, genJob.currentIteration, img, lossAll, lossSum)
+   
+        # Ready to stop yet?
+        if genJob.currentIteration == genJob.totalIterations:
+            self.OnFinishGeneration(genJob, genJob.currentIteration)    
+            return False           
+
+        genJob.currentIteration += 1
+        return True
+
+
+
     def ascend_txt(self, genJob, iteration, synthedImage):
         with torch.cuda.amp.autocast(self.config.use_mixed_precision):
 
-            cutouts, cutout_coords = genJob.CurrentCutoutMethod(synthedImage)
-
-            # attempt masking stuff
-            if genJob.config.use_spatial_prompts:
-                cutouts_detached = cutouts.detach() #used to prevent gradient for unmask parts
-                if genJob.blur_conv is not None:
-                    #Get the "blindfolded" image by blurring then addimg more noise
-                    facs = cutouts.new_empty([cutouts.size(0), 1, 1, 1]).uniform_(0, genJob.noise_fac)
-                    cutouts_blurred = genJob.blur_conv(cutouts_detached)+ facs * torch.randn_like(cutouts_detached)
-
-
-                cut_size = genJob.config.cut_size
-
-                #get mask patches
-                cutout_prompt_masks = []
-                for (x1,x2,y1,y2) in cutout_coords:
-                    cutout_mask = genJob.prompt_masks[:,:,y1:y2,x1:x2]
-                    cutout_mask = makeCutouts.resample(cutout_mask, (cut_size[0], cut_size[1]))
-                    cutout_prompt_masks.append(cutout_mask)
-                cutout_prompt_masks = torch.stack(cutout_prompt_masks,dim=1) #-> prompts X cutouts X color X H X W
-                
-                #apply each prompt, masking gradients
-                prompts_gradient_masked_cutouts = []
-                for idx,prompt in enumerate(genJob.embededPrompts):
-                    keep_mask = cutout_prompt_masks[idx] #-> cutouts X color X H X W
-                    #only apply this prompt if one image has a (big enough) part of mask
-                    if keep_mask.sum(dim=3).sum(dim=2).max()> cut_size[0]*2: #todo, change this
-                        
-                        block_mask = 1-keep_mask
-
-                        #compose cutout of gradient and non-gradient parts
-                        if genJob.blindfold[idx] and ((not isinstance(genJob.blindfold[idx],float)) or genJob.blindfold[idx]>random.random()):
-                            gradient_masked_cutouts = keep_mask*cutouts + block_mask*cutouts_blurred
-                        else:
-                            gradient_masked_cutouts = keep_mask*cutouts + block_mask*cutouts_detached
-
-                        prompts_gradient_masked_cutouts.append(gradient_masked_cutouts)
-                cutouts = torch.cat(prompts_gradient_masked_cutouts,dim=0)            
-
-
+            cutouts = genJob.GetCutouts(synthedImage)
 
             if self.clipDevice != self.vqganDevice:
                 clipEncodedImage = self.clipPerceptor.encode_image(self.normalize(cutouts.to(self.clipDevice))).float()
             else:
                 clipEncodedImage = self.clipPerceptor.encode_image(self.normalize(cutouts)).float()
 
-            result = []        
-
-            if genJob.config.init_weight:
-                # result.append(F.mse_loss(z, z_orig) * args.init_weight / 2)
-                result.append(F.mse_loss(genJob.quantizedImage, torch.zeros_like(genJob.original_quantizedImage)) * ((1/torch.tensor(iteration*2 + 1))*genJob.config.init_weight) / 2)
-
-            if genJob.config.use_spatial_prompts:
-                for prompt_masked_iii,prompt in zip(torch.chunk(clipEncodedImage,genJob.num_prompts,dim=0),genJob.embededPrompts):
-                    result.append(prompt(prompt_masked_iii))
-            else:
-                for prompt in genJob.embededPrompts:
-                    result.append(prompt(clipEncodedImage))
+            
+            result = genJob.GetCutoutResults(clipEncodedImage, iteration)
             
             return result # return loss
 

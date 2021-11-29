@@ -1,4 +1,4 @@
-import math
+import imageUtils
 
 import torch
 from torch.cuda.amp import autocast
@@ -34,57 +34,6 @@ class ClampWithGrad(torch.autograd.Function):
 
 clamp_with_grad = ClampWithGrad.apply
 
-
-# Various functions and classes
-def sinc(x):
-    return torch.where(x != 0, torch.sin(math.pi * x) / (math.pi * x), x.new_ones([]))
-
-
-def lanczos(x, a):
-    cond = torch.logical_and(-a < x, x < a)
-    out = torch.where(cond, sinc(x) * sinc(x/a), x.new_zeros([]))
-    return out / out.sum()
-
-
-def ramp(ratio, width):
-    n = math.ceil(width / ratio + 1)
-    out = torch.empty([n])
-    cur = 0
-    for i in range(out.shape[0]):
-        out[i] = cur
-        cur += ratio
-    return torch.cat([-out[1:].flip([0]), out])[1:-1]
-
-# Used in older MakeCutouts
-# resample is non-deterministic due to interpolate bicubic
-# F.pad is non determinsitic...
-def resample(input, sizeYX, align_corners=True):
-    n, c, h, w = input.shape
-    dh, dw = sizeYX
-
-    input = input.view([n * c, 1, h, w])
-
-    if not deterministic:
-        if dh < h:
-            kernel_h = lanczos(ramp(dh / h, 2), 2).to(input.device, input.dtype)
-            pad_h = (kernel_h.shape[0] - 1) // 2
-            input = F.pad(input, (0, 0, pad_h, pad_h), 'reflect')
-            input = F.conv2d(input, kernel_h[None, None, :, None])
-
-        if dw < w:
-            kernel_w = lanczos(ramp(dw / w, 2), 2).to(input.device, input.dtype)
-            pad_w = (kernel_w.shape[0] - 1) // 2
-            input = F.pad(input, (pad_w, pad_w, 0, 0), 'reflect')
-            input = F.conv2d(input, kernel_w[None, None, None, :])
-
-    input = input.view([n, c, h, w])
-
-    if deterministic:
-        #docs claim nearest and area are deterministic
-        return F.interpolate(input, sizeYX, mode='nearest') #align corners has to be false for linear due to some issues
-    else:
-        return F.interpolate(input, sizeYX, mode='bicubic', align_corners=align_corners)    
-    
 
 
 def setupAugmentList(augments, cut_size_x, cut_size_y):
@@ -170,7 +119,7 @@ class MakeCutoutsSquish(nn.Module):
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
                 cutouts.append(cutout)
             else:
-                cutouts.append(resample(cutout, (self.clipRes, self.clipRes)))            
+                cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
         batch = self.augs(torch.cat(cutouts, dim=0))
         
@@ -266,7 +215,7 @@ class MakeCutoutsNerdyNoPool(nn.Module):
             offsetx = torch.randint(0, sideX - size + 1, ())
             offsety = torch.randint(0, sideY - size + 1, ())
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
-            cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
+            cutouts.append(imageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
         batch = self.augs(torch.cat(cutouts, dim=0))
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
@@ -295,7 +244,7 @@ class MakeCutoutsOrig(nn.Module):
             offsetx = torch.randint(0, sideX - size + 1, ())
             offsety = torch.randint(0, sideY - size + 1, ())
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
-            cutouts.append(resample(cutout, (self.cut_size, self.cut_size)))
+            cutouts.append(imageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
 
         return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1), [] #TODO, make this return cordinates for masking a well
 
@@ -364,7 +313,7 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
                 cutouts.append(cutout)
             else:
-                cutouts.append(resample(cutout, (self.clipRes, self.clipRes)))            
+                cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
         batch = self.augs(torch.cat(cutouts, dim=0))
         
@@ -416,7 +365,7 @@ class MakeCutoutsOneSpot(MakeCutoutsSquish):
             cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
             cutouts.append(cutout)
         else:
-            cutouts.append(resample(cutout, (self.clipRes, self.clipRes)))            
+            cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
 
 
@@ -485,7 +434,7 @@ class MakeCutoutsMaskTest(nn.Module):
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
                 cutouts.append(cutout)
             else:
-                cutouts.append(resample(cutout, (self.clipRes, self.clipRes)))            
+                cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
         batch = self.augs(torch.cat(cutouts, dim=0))
         

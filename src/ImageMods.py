@@ -129,7 +129,7 @@ class OriginalImageMask(IImageMod):
 
 
 
-
+# from original inmplementation of image zoom from nerdyRodent
 class ImageZoomer(IImageMod):
     #fucking python has no maxint to use as a large value, annoying
     def __init__(self, GenJob, startIt: int = 0, endIt: int = 9999999999, freq: int = 10, zoom_scale: float = 0.99, zoom_shift_x: int = 0, zoom_shift_y: int = 0):
@@ -182,6 +182,64 @@ class ImageZoomer(IImageMod):
         
         self.GenJob.quantizedImage.requires_grad_(True)
         self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.config.optimiser, self.GenJob.config.step_size)
+
+
+# faster tensor based image zoomer, but only zooms in for now
+class ImageZoomInFast(IImageMod):
+    #fucking python has no maxint to use as a large value, annoying
+    def __init__(self, GenJob, startIt: int = 0, endIt: int = 9999999999, freq: int = 10, zoom_scale: float = 1.02, normalizedZoomPointX: float = 0.5, normalizedZoomPointY: float = 0.5):
+        super().__init__(GenJob, startIt, endIt, freq)
+
+        ##need to make these configurable
+        self.zoom_scale = zoom_scale
+        self.normalizedZoomPointX = normalizedZoomPointX
+        self.normalizedZoomPointY = normalizedZoomPointY
+
+        if self.zoom_scale < 1.0:
+            print("Error: zoom_scale in ImageZoomInFast mod too low")
+
+    def Initialize(self):
+        pass
+
+
+    def ShouldApply(self, stage: ImageModStage, iteration: int ) -> bool:
+        if stage.value != ImageModStage.PreTrain.value:
+            return False
+
+        return super().ShouldApply(stage, iteration)
+
+
+    def OnPreTrain(self, iteration: int ):
+        with torch.inference_mode():
+            imgTensor = self.GenJob.synth(self.GenJob.quantizedImage, self.GenJob.vqganGumbelEnabled)
+
+            n, c, h, w = imgTensor.shape
+
+            size_x = int( ( 1.0 / self.zoom_scale ) * w )
+            size_y = int( ( 1.0 / self.zoom_scale ) * h )
+            offsetx = int( ( w - size_x ) / 2 )
+            offsety = int( ( h - size_y ) / 2 )
+
+            offsetx = int( offsetx * ( 2 * self.normalizedZoomPointX ) )
+            offsety = int( offsety * ( 2 * self.normalizedZoomPointY ) )
+
+            zoomPortion = imgTensor[:, :, offsety:offsety + size_y, offsetx:offsetx + size_x]
+
+            # TODO: this is currently non-deterministic
+            zoomPortion = F.interpolate(zoomPortion, (h, w), mode='bicubic', align_corners=True)  
+            #zoomPortion = imageUtils.resample(zoomPortion, (h, w))
+
+            # TODO: can probably remove this and the unsqueeze below...
+            imgTensor = torch.squeeze(zoomPortion)
+
+        # Re-encode original?
+        self.GenJob.quantizedImage, *_ = self.GenJob.vqganModel.encode(imgTensor.to(self.GenJob.vqganDevice).unsqueeze(0) * 2 - 1)
+        #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
+        
+        self.GenJob.quantizedImage.requires_grad_(True)
+        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.config.optimiser, self.GenJob.config.step_size)
+
+
 
 
 

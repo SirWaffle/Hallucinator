@@ -3,6 +3,7 @@ import torch
 from torch.cuda import get_device_properties
 import json
 import copy
+import sys
 
 # this is used globally until i clean this all up
 args = None
@@ -139,3 +140,25 @@ def init():
 
         with open(args.save_json, 'wt') as f:
             json.dump(inputArgs, f, indent=4)
+
+
+    if args.convert_to_json_cmd:
+        print("json command conversion mode should be finished, exiting")
+        sys.exit()
+
+
+
+    #######
+    # handle some default args and other runtime decided stuff
+    #######
+
+    print("Args: " + str(args) )    
+
+    if not args.prompts and not args.image_prompts:
+        args.prompts = "illustrated waffle, and a SquishBrain"
+
+    if not args.augments:
+        args.augments = [['Af', 'Pe', 'Ji', 'Er']]
+    elif args.augments == 'None':
+        print("Augments set to none")
+        args.augments = []

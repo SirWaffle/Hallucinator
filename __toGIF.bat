@@ -4,7 +4,7 @@ set START_FRAME=-start_number 15
 
 REM frameratestuff
 SET /A INTERPOLATE_TO_FRAMERATE=48
-SET /A framerate=48
+SET /A framerate=24
 SET compressedFramerate=fps=14
 
 

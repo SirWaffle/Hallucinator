@@ -124,7 +124,7 @@ class OriginalImageMask(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.config.optimiser, self.GenJob.config.step_size)
+        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)
 
 
 
@@ -181,7 +181,7 @@ class ImageZoomer(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.config.optimiser, self.GenJob.config.step_size)
+        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)
 
 
 # faster tensor based image zoomer, but only zooms in for now
@@ -236,7 +236,7 @@ class ImageZoomInFast(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.config.optimiser, self.GenJob.config.step_size)
+        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)
 
 
 
@@ -272,7 +272,7 @@ class ImageRotate(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.config.optimiser, self.GenJob.config.step_size)                
+        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)                
 
 
 
@@ -297,4 +297,5 @@ class ChangePromptMod(IGenerationMod):
         if self.clearOtherPrompts == True:
             self.GenJob.embededPrompts = []
 
+        print('Changing prompt to: "' + self.prompt + '", from ' + str(self))
         self.GenJob.EmbedTextPrompt(self.prompt)               

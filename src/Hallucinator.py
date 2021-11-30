@@ -1,15 +1,11 @@
 import sys
 import os
 import random
+from typing import Tuple
 import numpy as np
-
-
-# shut off tqdm log spam by uncommenting the below
 from tqdm import tqdm
-import GenerationMods
-# from functools import partialmethod
-# tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
 
+import GenerationMods
 import makeCutouts
 import imageUtils
 import GenerateJob
@@ -25,6 +21,7 @@ from CLIP import clip
 # appending the path does work with Gumbel
 sys.path.append('taming-transformers')
 from taming.models import cond_transformer, vqgan
+from taming.modules.diffusionmodules import model
 
 
 
@@ -56,52 +53,34 @@ from subprocess import Popen, PIPE
 import re
 
 from torchvision.datasets import CIFAR100
- 
-
-
-#########################
-### misc functions that need to be sorted properly
-#########################
-class ReplaceGrad(torch.autograd.Function):
-    @staticmethod
-    @custom_fwd
-    def forward(ctx, x_forward, x_backward):
-        ctx.shape = x_backward.shape
-        return x_forward
-
-    @staticmethod
-    @custom_bwd
-    def backward(ctx, grad_in):
-        return None, grad_in.sum_to_size(ctx.shape)
-
-replace_grad = ReplaceGrad.apply
-
-
-
-
 
 
 
 ####################################################
 # main class used to start up the vqgan clip stuff, and allow for interactable generation
 # - basic usage can be seen from generate.py
-#
-# - advanced life cycle fatures involve resetting the network without reloading all the models
-#    saving time on repeated generations
-#
-# - advanced manipulation by modifying masks, prompts, image 
-#
-# - command pattern to modify internals between training steps
-#
 ####################################################
 
 class Hallucinator:
-    # TODO: dont use argparse args, use a config / json / something
-    # using argparseargs for now due to being in the middle of a refactor
-    def __init__(self, argparseArgs ):
-        ### this will define all classwide member variables, so its easy to see
-        ## should really convert this to something that is more explicit, but that will come later
-        self.config = argparseArgs
+
+    def __init__(self, clipModel:str = 'ViT-B/32', vqgan_config_path:str = 'checkpoints/vqgan_imagenet_f16_16384.yaml', vqgan_checkpoint_path:str = 'checkpoints/vqgan_imagenet_f16_16384.ckpt', 
+                 use_mixed_precision:bool = False, clip_cpu:bool = False, randomSeed:int = None, cuda_device:str = "cuda:0", anomaly_checker:bool = False, deterministic:int = 0, 
+                 log_clip:bool = False, log_clip_oneshot:bool = False, log_mem:bool = False, display_freq:int = 50 ):
+
+        ## passed in settings
+        self.clip_model = clipModel
+        self.vqgan_config_path = vqgan_config_path
+        self.vqgan_checkpoint_path = vqgan_checkpoint_path
+        self.use_mixed_precision = use_mixed_precision
+        self.clip_cpu = clip_cpu
+        self.seed = randomSeed
+        self.cuda_device = cuda_device
+        self.anomaly_checker = anomaly_checker
+        self.deterministic = deterministic
+        self.log_clip = log_clip
+        self.log_clip_oneshot = log_clip_oneshot
+        self.log_mem = log_mem
+        self.display_freq = display_freq
 
         #### class wide variables set with default values
         self.clipPerceptorInputResolution = None # set after loading clip
@@ -120,15 +99,8 @@ class Hallucinator:
                                         std=[0.26862954, 0.26130258, 0.27577711])
 
 
-
-    ########################
-    ## jobs and commands
-    ########################
-    def CreateNewGenerationJob(self, settings) -> GenerateJob.GenerationJob:
-        newJob = GenerateJob.GenerationJob(self, settings)
-        newJob.Initialize()
-        return newJob
-
+        # terrible hack
+        model.do_nan_check = self.use_mixed_precision
 
     #############
     ## Life cycle
@@ -142,22 +114,6 @@ class Hallucinator:
         self.InitClip()
         print('Using vqgandevice:', self.vqganDevice)
         print('Using clipdevice:', self.clipDevice)
-
-
-
-    ##############
-    ##  Getters and converters
-    ##############
-    def GerCurrentImageAsPIL(self, genJob:GenerateJob.GenerationJob) -> torch.Tensor:
-        out = self.synth(genJob.quantizedImage, genJob.vqganGumbelEnabled)
-        return TF.to_pil_image(out[0].cpu())
-
-    def GetCurrentImageSynthed(self, genJob:GenerateJob.GenerationJob) -> torch.Tensor:
-        return self.synth( genJob.quantizedImage, genJob.vqganGumbelEnabled)
-
-    def ConvertToPIL(self, synthedImage:torch.Tensor):
-        return TF.to_pil_image(synthedImage[0].cpu())
-
 
     ##################
     ### Logging and other internal helper methods...
@@ -195,7 +151,7 @@ class Hallucinator:
         d = x.pow(2).sum(dim=-1, keepdim=True) + codebook.pow(2).sum(dim=1) - 2 * x @ codebook.T
         indices = d.argmin(-1)
         x_q = F.one_hot(indices, codebook.shape[0]).to(d.dtype) @ codebook
-        return replace_grad(x_q, x)
+        return GenerateJob.replace_grad(x_q, x)
 
     def synth(self, z, gumbelMode) -> torch.Tensor:
         if gumbelMode:
@@ -239,79 +195,25 @@ class Hallucinator:
         return opt
 
 
-
-    ###################
-    ##  Get an instance of the cutout we are goign to use
-    ###################
-    def GetMakeCutouts( self, clipPerceptorInputResolution:int ):
-        # Cutout class options:
-        # 'squish', 'latest','original','updated' or 'updatedpooling'
-        if self.config.cut_method == 'latest':
-            self.config.cut_method = "nerdy"
-
-        cutSize = self.config.cut_size
-        if cutSize[0] == 0:
-            cutSize[0] = clipPerceptorInputResolution
-
-        if cutSize[1] == 0:
-            cutSize[1] = clipPerceptorInputResolution    
-
-        cutsMatchClip = True 
-        if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
-            cutsMatchClip = False
-
-        print("Cutouts method: " + self.config.cut_method + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
-
-        # used for whatever test cut thing im doing
-        if self.config.cut_method == 'test':
-            make_cutouts = makeCutouts.MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=True, augments=self.config.augments)
-
-
-        elif self.config.cut_method == 'maskTest':
-            make_cutouts = makeCutouts.MakeCutoutsMaskTest(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=False, augments=[])
-
-
-
-        elif self.config.cut_method == 'growFromCenter':
-            make_cutouts = makeCutouts.MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=True, augments=self.config.augments)        
-        elif self.config.cut_method == 'squish':        
-            make_cutouts = makeCutouts.MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], self.config.cutn, cut_pow=self.config.cut_pow, use_pool=True, augments=self.config.augments)
-        elif self.config.cut_method == 'original':
-            make_cutouts = makeCutouts.MakeCutoutsOrig(clipPerceptorInputResolution, self.config.cutn, cut_pow=self.config.cut_pow, augments=self.config.augments)
-        elif self.config.cut_method == 'nerdy':
-            make_cutouts = makeCutouts.MakeCutoutsNerdy(clipPerceptorInputResolution, self.config.cutn, cut_pow=self.config.cut_pow, augments=self.config.augments)
-        elif self.config.cut_method == 'nerdyNoPool':
-            make_cutouts = makeCutouts.MakeCutoutsNerdyNoPool(clipPerceptorInputResolution, self.config.cutn, cut_pow=self.config.cut_pow, augments=self.config.augments)
-        else:
-            print("Bad cut method selected")
-
-        return make_cutouts
-
-
-
     ##########################
     ### One time init things... parsed from passed in args
     ##########################
 
     def InitTorch(self):
         print("Using pyTorch: " + str( torch.__version__) )
-        print("Using mixed precision: " + str(self.config.use_mixed_precision) )  
+        print("Using mixed precision: " + str(self.use_mixed_precision) )  
 
         #TODO hacky as fuck
-        makeCutouts.use_mixed_precision = self.config.use_mixed_precision
+        makeCutouts.use_mixed_precision = self.use_mixed_precision
 
-        if self.config.seed is None:
-            seed = torch.seed()
-        else:
-            seed = self.config.seed  
+        if self.seed is None:
+            self.seed = torch.seed()
 
-        print('Using seed:', seed)
-        self.seed_torch(seed)
+        print('Using seed:', self.seed)
+        self.seed_torch(self.seed)
 
-        if self.config.deterministic >= 2:
+        if self.deterministic >= 2:
             print("Determinism at max: forcing a lot of things so this will work, no augs, non-pooling cut method, bad resampling")
-            self.config.augments = "none"
-            self.config.cut_method = "original"
 
             # need to make cutouts use deterministic stuff... probably not a good way
             makeCutouts.deterministic = True
@@ -333,7 +235,7 @@ class Hallucinator:
 
             # from nightly build for 1.11 -> 0 no warn, 1 warn, 2 error
             # torch.set_deterministic_debug_mode(2)
-        elif self.config.deterministic == 1:
+        elif self.deterministic == 1:
             print("Determinism at medium: cudnn determinism and benchmark disabled")
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False # NR: True is a bit faster, but can lead to OOM. False is more deterministic.
@@ -341,23 +243,22 @@ class Hallucinator:
             print("Determinism at minimum: cudnn benchmark on")
             torch.backends.cudnn.benchmark = True #apparently slightly faster, but less deterministic  
 
-        if self.config.use_mixed_precision==True:
-            print("cant use augments in mixed precision mode yet...")
-            self.config.augments = [] 
+        if self.use_mixed_precision==True:
+            print("Hallucinator mxed precision mode enabled: cant use augments in mixed precision mode yet")
 
         # Fallback to CPU if CUDA is not found and make sure GPU video rendering is also disabled
         # NB. May not work for AMD cards?
-        if not self.config.cuda_device == 'cpu' and not torch.cuda.is_available():
-            self.config.cuda_device = 'cpu'
+        if not self.cuda_device == 'cpu' and not torch.cuda.is_available():
+            self.cuda_device = 'cpu'
             print("Warning: No GPU found! Using the CPU instead. The iterations will be slow.")
             print("Perhaps CUDA/ROCm or the right pytorch version is not properly installed?")     
 
-        if self.config.anomaly_checker:
+        if self.anomaly_checker:
             torch.autograd.set_detect_anomaly(True)
 
 
     def InitClip(self):
-        if self.config.log_clip:
+        if self.log_clip:
             print("logging clip probabilities at end, loading vocab stuff")
             cifar100 = CIFAR100(root=".", download=True, train=False)
 
@@ -371,17 +272,17 @@ class Hallucinator:
 
         print( "available clip models: " + str(clip.available_models() ))
         print("CLIP jit: " + str(jit))
-        print("using clip model: " + self.config.clip_model)
+        print("using clip model: " + self.clip_model)
 
-        if self.config.clip_cpu == False:
+        if self.clip_cpu == False:
             self.clipDevice = self.vqganDevice
             if jit == False:
-                self.clipPerceptor = clip.load(self.config.clip_model, jit=jit, download_root="./clipModels/")[0].eval().requires_grad_(False).to(self.clipDevice)
+                self.clipPerceptor = clip.load(self.clip_model, jit=jit, download_root="./clipModels/")[0].eval().requires_grad_(False).to(self.clipDevice)
             else:
-                self.clipPerceptor = clip.load(self.config.clip_model, jit=jit, download_root="./clipModels/")[0].eval().to(self.clipDevice)    
+                self.clipPerceptor = clip.load(self.clip_model, jit=jit, download_root="./clipModels/")[0].eval().to(self.clipDevice)    
         else:
             self.clipDevice = torch.device("cpu")
-            self.clipPerceptor = clip.load(self.config.clip_model, "cpu", jit=jit)[0].eval().requires_grad_(False).to(self.clipDevice) 
+            self.clipPerceptor = clip.load(self.clip_model, "cpu", jit=jit)[0].eval().requires_grad_(False).to(self.clipDevice) 
 
 
 
@@ -394,31 +295,28 @@ class Hallucinator:
 
 
     def InitVQGAN(self):
-        self.vqganDevice = torch.device(self.config.cuda_device)
-
-        config_path = self.config.vqgan_config
-        checkpoint_path = self.config.vqgan_checkpoint
+        self.vqganDevice = torch.device(self.cuda_device)
 
         self.vqganGumbelEnabled = False
-        config = OmegaConf.load(config_path)
+        config = OmegaConf.load(self.vqgan_config_path)
 
-        print("---  VQGAN config " + str(config_path))    
+        print("---  VQGAN config " + str(self.vqgan_config_path))    
         print(yaml.dump(OmegaConf.to_container(config)))
-        print("---  / VQGAN config " + str(config_path))
+        print("---  / VQGAN config " + str(self.vqgan_config_path))
 
         if config.model.target == 'taming.models.vqgan.VQModel':
             self.vqganModel = vqgan.VQModel(**config.model.params)
             self.vqganModel.eval().requires_grad_(False)
-            self.vqganModel.init_from_ckpt(checkpoint_path)
+            self.vqganModel.init_from_ckpt(self.vqgan_checkpoint_path)
         elif config.model.target == 'taming.models.vqgan.GumbelVQ':
             self.vqganModel = vqgan.GumbelVQ(**config.model.params)
             self.vqganModel.eval().requires_grad_(False)
-            self.vqganModel.init_from_ckpt(checkpoint_path)
+            self.vqganModel.init_from_ckpt(self.vqgan_checkpoint_path)
             self.vqganGumbelEnabled = True
         elif config.model.target == 'taming.models.cond_transformer.Net2NetTransformer':
             parent_model = cond_transformer.Net2NetTransformer(**config.model.params)
             parent_model.eval().requires_grad_(False)
-            parent_model.init_from_ckpt(checkpoint_path)
+            parent_model.init_from_ckpt(self.vqgan_checkpoint_path)
             self.vqganModel = parent_model.first_stage_model
         else:
             raise ValueError(f'unknown model type: {config.model.target}')
@@ -435,12 +333,12 @@ class Hallucinator:
     ## clip one shot analysis, just for fun, probably done wrong
     ###############################
     @torch.inference_mode()
-    def WriteLogClipResults(self, imgout:torch.Tensor):
+    def WriteLogClipResults(self, genJob:GenerateJob.GenerationJob, imgout:torch.Tensor):
         #TODO properly manage initing the cifar100 stuff here if its not already
 
         img = self.normalize(self.CurrentCutoutMethod(imgout))
 
-        if self.config.log_clip_oneshot:
+        if self.log_clip_oneshot:
             #one shot identification
             image_features = self.clipPerceptor.encode_image(img).float()
 
@@ -460,13 +358,13 @@ class Hallucinator:
             for value, index in zip(values, indices):
                 print(f"{self.clipCifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
 
-        if self.config.log_clip:
+        if self.log_clip:
             # prompt matching percentages
             textins = []
             promptPartStrs = []
-            if self.config.prompts:
-                for prompt in self.config.prompts:
-                    txt, weight, stop = split_prompt(prompt)  
+            if genJob.config.prompts:
+                for prompt in genJob.config.prompts:
+                    txt, weight, stop = genJob.split_prompt(prompt)  
                     splitTxt = txt.split()
                     for stxt in splitTxt:   
                         promptPartStrs.append(stxt)       
@@ -519,19 +417,19 @@ class Hallucinator:
     # step a job, returns true if theres more processing left for it
     def ProcessJobStep(self, genJob:GenerateJob.GenerationJob, trainCallbackFunc = None) -> bool:
         # Change text prompt
-        if genJob.config.prompt_frequency > 0:
-            if genJob.currentIteration % genJob.config.prompt_frequency == 0 and genJob.currentIteration > 0:
+        if genJob.prompt_frequency > 0:
+            if genJob.currentIteration % genJob.prompt_frequency == 0 and genJob.currentIteration > 0:
                 # In case there aren't enough phrases, just loop
-                if genJob.phraseCounter >= len(self.all_phrases):
+                if genJob.phraseCounter >= len(genJob.all_phrases):
                     genJob.phraseCounter = 0
                 
                 pMs = []
-                self.config.prompts = self.all_phrases[genJob.phraseCounter]
+                genJob.prompts = genJob.all_phrases[genJob.phraseCounter]
 
                 # Show user we're changing prompt                                
-                print(self.config.prompts)
+                print(genJob.prompts)
                 
-                for prompt in self.config.prompts:
+                for prompt in genJob.prompts:
                     genJob.EmbedTextPrompt(prompt)
 
                 genJob.phraseCounter += 1
@@ -544,6 +442,8 @@ class Hallucinator:
 
         if trainCallbackFunc != None:
             trainCallbackFunc(genJob, genJob.currentIteration, img, lossAll, lossSum)
+        
+        self.DefaultTrainCallback(genJob, genJob.currentIteration, img, lossAll, lossSum)
    
         # Ready to stop yet?
         if genJob.currentIteration == genJob.totalIterations:
@@ -553,10 +453,63 @@ class Hallucinator:
         genJob.currentIteration += 1
         return True
 
+    
+    @torch.inference_mode()
+    def DefaultTrainCallback(self, genJob:GenerateJob.GenerationJob, iteration:int, curImg, lossAll, lossSum):
+        # stat updates and progress images
+        if iteration % self.display_freq == 0:
+            self.DefaultCheckinLogging(genJob, iteration, lossAll, curImg)  
+
+        if iteration % genJob.save_freq == 0:     
+            if genJob.save_seq == True:
+                genJob.savedImageCount = genJob.savedImageCount + 1                
+            else:
+                genJob.savedImageCount = iteration
+                
+            genJob.SaveImage( genJob.ConvertToPIL(curImg), str(genJob.savedImageCount).zfill(5))
+                            
+        if genJob.save_best == True:
+
+            lossAvg = lossSum / len(lossAll)
+
+            if genJob.bestErrorScore > lossAvg.item():
+                print("saving image for best error: " + str(lossAvg.item()))
+                genJob.bestErrorScore = lossAvg
+                genJob.SaveImage( genJob.ConvertToPIL(curImg), "lowest_error_")
+
+
+    @torch.inference_mode()
+    def DefaultCheckinLogging(self, genJob:GenerateJob.GenerationJob, i:int, losses, out):
+        print("\n*************************************************")
+        print(f'i: {i}, loss sum: {sum(losses).item():g}')
+        print("*************************************************")
+
+        promptNum = 0
+        lossLen = len(losses)
+        if genJob.embededPrompts and lossLen <= len(genJob.embededPrompts):
+            for loss in losses:            
+                print( "----> " + genJob.embededPrompts[promptNum].TextPrompt + " - loss: " + str( loss.item() ) )
+                promptNum += 1
+        else:
+            print("mismatch in prompt numbers and losses!")
+
+        print(" ")
+
+        if self.log_clip:
+            self.WriteLogClipResults(out)
+            print(" ")
+
+        if self.log_mem:
+            self.log_torch_mem()
+            print(" ")
+
+        print(" ")
+        sys.stdout.flush()       
+
 
 
     def ascend_txt(self, genJob:GenerateJob.GenerationJob, iteration:int, synthedImage:torch.Tensor):
-        with torch.cuda.amp.autocast(self.config.use_mixed_precision):
+        with torch.cuda.amp.autocast(self.use_mixed_precision):
 
             cutouts = genJob.GetCutouts(synthedImage)
 
@@ -572,7 +525,7 @@ class Hallucinator:
 
 
     def train(self, genJob:GenerateJob.GenerationJob, iteration:int):
-        with torch.cuda.amp.autocast(self.config.use_mixed_precision):
+        with torch.cuda.amp.autocast(self.use_mixed_precision):
             genJob.optimiser.zero_grad(set_to_none=True)
             
             synthedImage = self.synth(genJob.quantizedImage, genJob.vqganGumbelEnabled) 
@@ -580,7 +533,7 @@ class Hallucinator:
             lossAll = self.ascend_txt(genJob, iteration, synthedImage)
             lossSum = sum(lossAll)
 
-            if genJob.config.optimiser == "MADGRAD":
+            if genJob.optimiser == "MADGRAD":
                 genJob.loss_idx.append(lossSum.item())
                 if iteration > 100: #use only 100 last looses to avg
                     avg_loss = sum(self.loss_idx[iteration-100:])/len(self.loss_idx[iteration-100:]) 
@@ -589,7 +542,7 @@ class Hallucinator:
 
                 genJob.scheduler.step(avg_loss)
             
-            if self.config.use_mixed_precision == False:
+            if self.use_mixed_precision == False:
                 lossSum.backward()
                 genJob.optimiser.step()
             else:

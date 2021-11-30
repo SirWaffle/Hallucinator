@@ -15,6 +15,49 @@ use_mixed_precision = False
 deterministic = False
 
 
+###################
+##  string based switch statement 'factory'
+###################
+def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int, cutSize, cutPow:float, augments:list ):
+    # Cutout class options:
+    # 'squish', 'latest','original','updated' or 'updatedpooling'
+    if cutMethod == 'latest':
+        cutMethod = "nerdy"
+
+    if cutSize[0] == 0:
+        cutSize[0] = clipPerceptorInputResolution
+
+    if cutSize[1] == 0:
+        cutSize[1] = clipPerceptorInputResolution    
+
+    cutsMatchClip = True 
+    if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
+        cutsMatchClip = False
+
+    print("Cutouts method: " + cutMethod + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
+
+    # used for whatever test cut thing im doing
+    if cutMethod == 'test':
+        make_cutouts = MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augments)
+
+    elif cutMethod == 'maskTest':
+        make_cutouts = MakeCutoutsMaskTest(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=False, augments=[])
+
+    elif cutMethod == 'growFromCenter':
+        make_cutouts = MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augments)        
+    elif cutMethod == 'squish':        
+        make_cutouts = MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augments)
+    elif cutMethod == 'original':
+        make_cutouts = MakeCutoutsOrig(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augments)
+    elif cutMethod == 'nerdy':
+        make_cutouts = MakeCutoutsNerdy(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augments)
+    elif cutMethod == 'nerdyNoPool':
+        make_cutouts = MakeCutoutsNerdyNoPool(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augments)
+    else:
+        print("Bad cut method selected")
+
+    return make_cutouts
+
 
 
 class ClampWithGrad(torch.autograd.Function):

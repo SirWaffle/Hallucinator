@@ -3,6 +3,7 @@ import torch
 from torch.cuda import get_device_properties
 import json
 import copy
+import sys
 
 # this is used globally until i clean this all up
 args = None
@@ -46,37 +47,38 @@ def init():
     vq_parser.add_argument("-d",    "--deterministic", type=int, default=1, help="Determinism: 0 ( none ), 1 ( some, default ), 2 ( as much as possible )", dest='deterministic')
 
     # cuts and pooling
-    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','nerdyNoPool','nerdy','squish','latest','test','growFromCenter'], default='latest', dest='cut_method')
+    vq_parser.add_argument("-cutm", "--cut_method", type=str, help="Cut method", choices=['original','nerdyNoPool','nerdy','squish','latest','test','growFromCenter','maskTest'], default='latest', dest='cut_method')
     vq_parser.add_argument("-cuts", "--num_cuts", type=int, help="Number of cuts", default=32, dest='cutn')
     vq_parser.add_argument("-cutp", "--cut_power", type=float, help="Cut power", default=1., dest='cut_pow')
 
     vq_parser.add_argument("-cutsize",    "--cut_size", nargs=2, type=int, help="Cut size (width height) (clip controlled)", default=[0,0], dest='cut_size')
 
     # manage output files and other logged data 
-    vq_parser.add_argument("-od",   "--output_dir", type=str, help="Output filename", default="./output/", dest='output_dir')
-    vq_parser.add_argument("-o",    "--output", type=str, help="Output filename", default="output.png", dest='output')    
-    vq_parser.add_argument("-se",   "--save_every", type=int, help="Save image iterations", default=50, dest='save_freq')
-    vq_parser.add_argument("-sb",   "--save_best", help="Save the best scored image", action='store_true', dest='save_best')
+    vq_parser.add_argument("--output_dir", type=str, help="Output filename", default="./output/", dest='output_dir')
+    vq_parser.add_argument("--output", type=str, help="Output filename", default="output.png", dest='output')    
+    vq_parser.add_argument("--save_every", type=int, help="Save image iterations", default=50, dest='save_freq')
+    vq_parser.add_argument("--save_seq",  help="saved images are numbered sequentially instead of by iteration number", action='store_true')
+    vq_parser.add_argument("--save_best", help="Save the best scored image", action='store_true', dest='save_best')
 
     # attempt to use mixed precision mode here
     # need to hunt down causes of the decoder produces inf's/nan's. current hack is to replace them with min/max floats, slower and produces poorer results than 32 bit.
-    vq_parser.add_argument("-usemix", "--use_mixed",  action='store_true', help="mixed precision reduces memory size greatly, Augmentations do not work in this mode, yet", dest='use_mixed_precision')
+    vq_parser.add_argument("--use_mixed",  action='store_true', help="mixed precision reduces memory size greatly, Augmentations do not work in this mode, yet", dest='use_mixed_precision')
 
     # this works, can go from 400x400 to 575x400 on an 8GB card being used as a display device
     # time to crunch went up from 1.07 per iter to 7.5s per iteration, cant be used in conjunction with mixed precision mode ( yet )
-    vq_parser.add_argument("-clipcpu",   "--clip_cpu",  action='store_true', help="forces the clip model into the cpu. slows things down but frees up memory so you can make larger images on low VRAM cards", 
+    vq_parser.add_argument("--clip_cpu",  action='store_true', help="forces the clip model into the cpu. slows things down but frees up memory so you can make larger images on low VRAM cards", 
                             dest='clip_cpu')
 
     # helpful for tracking down various floating point errors 
-    vq_parser.add_argument("-ac",   "--anomalyChecker",  action='store_true', help="enabled the pyTorch anomaly checker for nan's, useful in mixed precision mode which has had some issues", 
+    vq_parser.add_argument("--anomalyChecker",  action='store_true', help="enabled the pyTorch anomaly checker for nan's, useful in mixed precision mode which has had some issues", 
                             dest='anomaly_checker')
 
     # simple memory logger
-    vq_parser.add_argument("-lm",   "--logMem",  action='store_true', help="log memory usage every checkin", dest='log_mem')
+    vq_parser.add_argument("--logMem",  action='store_true', help="log memory usage every checkin", dest='log_mem')
 
     # writes one shot clip and a sort of prompt stat check using clip
-    vq_parser.add_argument("-lcp",   "--logClipProbabilities",  action='store_true', dest='log_clip')
-    vq_parser.add_argument("-lcos",  "--logClipOneShotGuesses",  action='store_true', dest='log_clip_oneshot')
+    vq_parser.add_argument("--logClipProbabilities",  action='store_true', dest='log_clip')
+    vq_parser.add_argument("--logClipOneShotGuesses",  action='store_true', dest='log_clip_oneshot')
 
     #allow configs from json files / save to json file for later preservation
     vq_parser.add_argument('--save_json', help='Save settings to file in json format. Ignored in json file')
@@ -84,8 +86,6 @@ def init():
     vq_parser.add_argument('--save_json_strip_misc', action='store_true', help='remove misc settings when saving config to use as a command')
     vq_parser.add_argument('--load_json', help='Load settings from file in json format. Command line options override values in file.')
     vq_parser.add_argument('--convert_to_json_cmd', action='store_true', help='only load/save back to json for use as a cmd')
-
-
 
 
     # Execute the parse_args() method
@@ -125,7 +125,7 @@ def init():
 
 
         if args.save_json_strip_misc:
-            #pull out user specific stuff here that will almost always be controlled via commandline, so we can make a clean command file
+            #pull out user specific stuff here, so we can make a command
             inputArgs.pop("prompts", None)
             inputArgs.pop("seed", None)
             inputArgs.pop("image_prompts", None)
@@ -140,3 +140,25 @@ def init():
 
         with open(args.save_json, 'wt') as f:
             json.dump(inputArgs, f, indent=4)
+
+
+    if args.convert_to_json_cmd:
+        print("json command conversion mode should be finished, exiting")
+        sys.exit()
+
+
+
+    #######
+    # handle some default args and other runtime decided stuff
+    #######
+
+    print("Args: " + str(args) )    
+
+    if not args.prompts and not args.image_prompts:
+        args.prompts = "illustrated waffle, and a SquishBrain"
+
+    if not args.augments:
+        args.augments = [['Af', 'Pe', 'Ji', 'Er']]
+    elif args.augments == 'None':
+        print("Augments set to none")
+        args.augments = []

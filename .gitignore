@@ -17,3 +17,10 @@ steps/
 # Files
 output.png
 steps.mp4
+cifar-100-python.tar.gz
+cifar-100-python/file.txt~
+cifar-100-python/meta
+cifar-100-python/test
+cifar-100-python/train
+clipModels/ViT-B-32.pt
+/output

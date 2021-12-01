@@ -29,7 +29,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - integration of more models and methods for generation
 - masking to prevent modifications in certain places, masking to provide specific prompts in certain locations
 - integration via plugins to art programs for interactive generation
-- interactive server mode for a dedicated interactive instance on a local/remote machine
+- interactive server mode for a dedicated interactive instance on a local machine
 
 
 
@@ -203,3 +203,20 @@ you can also view all command line options in the ./src/cmdLineArgs.py file
 Katherine Crowson - <https://github.com/crowsonkb>
 
 Nerdy Rodent - <https://github.com/nerdyrodent/VQGAN-CLIP>
+
+
+new mods from various notebooks and repos:
+
+spatial masks - https://colab.research.google.com/drive/1B9hPy1-6qhnRL3JNusFmfyWoYvjiJ1jq?usp=sharing#scrollTo=tLw9p5Rzacso
+
+MSE
+https://www.reddit.com/r/bigsleep/comments/onmz5r/mse_regulized_vqgan_clip/
+https://colab.research.google.com/drive/1gFn9u3oPOgsNzJWEFmdK-N9h_y65b8fj?usp=sharing#scrollTo=wSfISAhyPmyp
+
+
+MADGRAD implementation reference
+https://www.kaggle.com/yannnobrega/vqgan-clip-z-quantize-method
+
+
+Originally made by Katherine Crowson (https://github.com/crowsonkb, https://twitter.com/RiversHaveWings)
+The original BigGAN+CLIP method was by https://twitter.com/advadnoun

@@ -1,0 +1,31 @@
+
+Various things that need to be done, yes I'm too lazy to use a ticket tracking system for this:
+
+- search for #TODO or # TODO for spots in code with notes
+
+
+NOTES:
+- torch transforms are faster, but dont seem to work out as well as the kornia augmentations
+
+
+TODOs:
+- fix the horrible constructors i made to get rid of global variable dependency on argparse things
+
+- refactor more, to clean up the wreckage of code. think about making a seperate generation job for spatial stuff, 
+    and moving some things from the hallucinator class into generation job, just...clean everything now that its sorted better
+
+- change how the image modifications that change the actual image being fed into the taming-transformers network get done  
+    so that its possible to do multiple in the same frame, and only re-encode & recreate the optimisers once
+
+- pop off mods as they are finished, to reduce iterations
+
+- profile this thing to get more speed, must go faster
+
+
+DONE:  
+- dont rely on argparse stuff across classes
+
+
+
+
+

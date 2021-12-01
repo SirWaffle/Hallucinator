@@ -468,10 +468,10 @@ class Hallucinator:
     @torch.inference_mode()
     def DefaultTrainCallback(self, genJob:GenerateJob.GenerationJob, iteration:int, curImg, lossAll, lossSum):
         # stat updates and progress images
-        if iteration % self.display_freq == 0:
+        if iteration % self.display_freq == 0 and iteration != 0:
             self.DefaultCheckinLogging(genJob, iteration, lossAll, curImg)  
 
-        if iteration % genJob.save_freq == 0:     
+        if iteration % genJob.save_freq == 0 and iteration != 0:     
             if genJob.save_seq == True:
                 genJob.savedImageCount = genJob.savedImageCount + 1                
             else:

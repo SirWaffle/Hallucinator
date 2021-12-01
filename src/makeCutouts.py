@@ -38,6 +38,7 @@ clamp_with_grad = ClampWithGrad.apply
 # current defaults = 'Af', 'Pe', 'Ji', 'Er'
 def setupAugmentList(augmentNameList, cut_size_x, cut_size_y, use_kornia = True):
     # Pick your own augments & their order
+    print("Setting up cutMethod using kornia augments: " + str( use_kornia ) )
     augment_list = []
     if augmentNameList:
         for item in augmentNameList[0]:

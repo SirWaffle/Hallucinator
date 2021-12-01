@@ -404,14 +404,25 @@ class Hallucinator:
     ### interactive generation steps and training
     ######################
 
-    def ProcessJobFull(self, genJob:GenerateJob.GenerationJob, trainCallback = None):
-        moreWork = True
-        with tqdm() as pbar:
-            while moreWork:   
-                # Training time         
-                moreWork = self.ProcessJobStep(genJob, trainCallback )
-                pbar.update()
+    def ProcessJobFullProfile(self, genJob:GenerateJob.GenerationJob, trainCallback = None):
+        with torch.autograd.profiler.profile(use_cuda=True, with_stack=True) as prof:
+            self.ProcessJobFull(genJob, trainCallback)
 
+        #group_by_stack_n=5
+        print("=========== CPU SELF =================")
+        print( prof.key_averages().table(sort_by="self_cpu_time_total"))
+        print("=========== CUDA SELF =================")
+        print( prof.key_averages().table(sort_by="self_cuda_time_total"))
+        print("=========== STACKs    =================")
+        print( prof.key_averages(group_by_stack_n=60).table(sort_by="self_cuda_time_total"))
+
+    def ProcessJobFull(self, genJob:GenerateJob.GenerationJob, trainCallback = None):        
+            moreWork = True
+            with tqdm() as pbar:
+                while moreWork:   
+                    # Training time         
+                    moreWork = self.ProcessJobStep(genJob, trainCallback )
+                    pbar.update()
 
 
     # step a job, returns true if theres more processing left for it
@@ -466,7 +477,7 @@ class Hallucinator:
             else:
                 genJob.savedImageCount = iteration
                 
-            genJob.SaveImage( genJob.ConvertToPIL(curImg), str(genJob.savedImageCount).zfill(5))
+            genJob.SaveImageTensor( curImg, str(genJob.savedImageCount).zfill(5))
                             
         if genJob.save_best == True:
 
@@ -475,7 +486,7 @@ class Hallucinator:
             if genJob.bestErrorScore > lossAvg.item():
                 print("saving image for best error: " + str(lossAvg.item()))
                 genJob.bestErrorScore = lossAvg
-                genJob.SaveImage( genJob.ConvertToPIL(curImg), "lowest_error_")
+                genJob.SaveImageTensor( curImg, "lowest_error_")
 
 
     @torch.inference_mode()

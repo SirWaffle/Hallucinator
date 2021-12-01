@@ -4,7 +4,6 @@
 
 import sys
 import gc
-import ProfilerHelper
 
 sys.path.append('src')
 
@@ -15,6 +14,7 @@ from src import Hallucinator
 from src import HallucinatorHelpers
 from src import GenerationMods
 from src import GenerateJob
+from src import ProfilerHelper
 
 from PIL import ImageFile, PngImagePlugin
 ImageFile.LOAD_TRUNCATED_IMAGES = True

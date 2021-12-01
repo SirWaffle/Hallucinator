@@ -8,55 +8,12 @@ from torch.cuda.amp import custom_fwd
 from torch.cuda.amp import custom_bwd
 
 import kornia.augmentation as K
+import torchvision.transforms as TT
 
 # hack to manage mixed_precision
 # set from generate based on cmd args
 use_mixed_precision = False
 deterministic = False
-
-
-###################
-##  string based switch statement 'factory'
-###################
-def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int, cutSize, cutPow:float, augments:list ):
-    # Cutout class options:
-    # 'squish', 'latest','original','updated' or 'updatedpooling'
-    if cutMethod == 'latest':
-        cutMethod = "nerdy"
-
-    if cutSize[0] == 0:
-        cutSize[0] = clipPerceptorInputResolution
-
-    if cutSize[1] == 0:
-        cutSize[1] = clipPerceptorInputResolution    
-
-    cutsMatchClip = True 
-    if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
-        cutsMatchClip = False
-
-    print("Cutouts method: " + cutMethod + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
-
-    # used for whatever test cut thing im doing
-    if cutMethod == 'test':
-        make_cutouts = MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augments)
-
-    elif cutMethod == 'maskTest':
-        make_cutouts = MakeCutoutsMaskTest(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=False, augments=[])
-
-    elif cutMethod == 'growFromCenter':
-        make_cutouts = MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augments)        
-    elif cutMethod == 'squish':        
-        make_cutouts = MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augments)
-    elif cutMethod == 'original':
-        make_cutouts = MakeCutoutsOrig(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augments)
-    elif cutMethod == 'nerdy':
-        make_cutouts = MakeCutoutsNerdy(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augments)
-    elif cutMethod == 'nerdyNoPool':
-        make_cutouts = MakeCutoutsNerdyNoPool(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augments)
-    else:
-        print("Bad cut method selected")
-
-    return make_cutouts
 
 
 
@@ -78,37 +35,140 @@ class ClampWithGrad(torch.autograd.Function):
 clamp_with_grad = ClampWithGrad.apply
 
 
-
-def setupAugmentList(augments, cut_size_x, cut_size_y):
+# current defaults = 'Af', 'Pe', 'Ji', 'Er'
+def setupAugmentList(augmentNameList, cut_size_x, cut_size_y, use_kornia = True):
     # Pick your own augments & their order
     augment_list = []
-    if augments:
-        for item in augments[0]:
-            if item == 'Ji':
-                augment_list.append(K.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1, p=0.7))
-            elif item == 'Sh':
-                augment_list.append(K.RandomSharpness(sharpness=0.3, p=0.5))
-            elif item == 'Gn':
-                augment_list.append(K.RandomGaussianNoise(mean=0.0, std=1., p=0.5))
-            elif item == 'Pe':
-                augment_list.append(K.RandomPerspective(distortion_scale=0.7, p=0.7))
-            elif item == 'Ro':
-                augment_list.append(K.RandomRotation(degrees=15, p=0.7))
-            elif item == 'Af':
-                augment_list.append(K.RandomAffine(degrees=15, translate=0.1, shear=5, p=0.7, padding_mode='zeros', keepdim=True)) # border, reflection, zeros
-            elif item == 'Et':
-                augment_list.append(K.RandomElasticTransform(p=0.7))
-            elif item == 'Ts':
-                augment_list.append(K.RandomThinPlateSpline(scale=0.8, same_on_batch=True, p=0.7))
-            elif item == 'Cr':
-                augment_list.append(K.RandomCrop(size=(cut_size_x,cut_size_y), pad_if_needed=True, padding_mode='reflect', p=0.5))
-            elif item == 'Er':
-                augment_list.append(K.RandomErasing(scale=(.1, .4), ratio=(.3, 1/.3), same_on_batch=True, p=0.7))
-            elif item == 'Re':
-                augment_list.append(K.RandomResizedCrop(size=(cut_size_x,cut_size_y), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5))
+    if augmentNameList:
+        for item in augmentNameList[0]:
+            if use_kornia:
+                if item == 'Ji':
+                    augment_list.append(K.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1, p=0.7))
+                elif item == 'Sh':
+                    augment_list.append(K.RandomSharpness(sharpness=0.3, p=0.5))
+                elif item == 'Gn':
+                    augment_list.append(K.RandomGaussianNoise(mean=0.0, std=1., p=0.5))
+                elif item == 'Pe':
+                    augment_list.append(K.RandomPerspective(distortion_scale=0.7, p=0.7))
+                elif item == 'Ro':
+                    augment_list.append(K.RandomRotation(degrees=15, p=0.7))
+                elif item == 'Af':
+                    augment_list.append(K.RandomAffine(degrees=15, translate=0.1, shear=5, p=0.7, padding_mode='zeros', keepdim=True)) # border, reflection, zeros
+                elif item == 'Et':
+                    augment_list.append(K.RandomElasticTransform(p=0.7))
+                elif item == 'Ts':
+                    augment_list.append(K.RandomThinPlateSpline(scale=0.8, same_on_batch=True, p=0.7))
+                elif item == 'Cr':
+                    augment_list.append(K.RandomCrop(size=(cut_size_x,cut_size_y), pad_if_needed=True, padding_mode='reflect', p=0.5))
+                elif item == 'Er':
+                    augment_list.append(K.RandomErasing(scale=(.1, .4), ratio=(.3, 1/.3), same_on_batch=True, p=0.7))
+                elif item == 'Re':
+                    augment_list.append(K.RandomResizedCrop(size=(cut_size_x,cut_size_y), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5))
+                else:
+                    print("torch augment not found or not supported: " + item)
+
+            else:
+                # TODO: not all of these are tested and verified
+                # in the current state, these are faster, but dont seem to work quite as well
+                if item == 'Ji':
+                    #augment_list.append(K.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1, p=0.7))
+                    augment_list.append( 
+                        TT.RandomApply( 
+                            torch.nn.ModuleList( 
+                                [ TT.ColorJitter(brightness=(0.1, 0.1), contrast=(0.1, 0.1), saturation=(0.1, 0.1), hue=(0.1, 0.1)),]
+                            ) 
+                            ,p=0.7) 
+                        )
+
+                elif item == 'Sh':
+                    augment_list.append(TT.RandomAdjustSharpness(sharpness_factor=0.3, p=0.5))
+                elif item == 'Gn':
+                    # augment_list.append(TT.RandomGaussianNoise(mean=0.0, std=1., p=0.5)) 
+                    augment_list.append( 
+                        TT.RandomApply( 
+                            TT.Compose( [ TT.Lambda ( lambda x : x + torch.randn_like( x ) ) ] )
+                            , p=0.5) 
+                        )
+                elif item == 'Pe':
+                    augment_list.append(TT.RandomPerspective(distortion_scale=0.7, p=0.7))
+                elif item == 'Ro':
+                    augment_list.append(TT.RandomRotation(degrees=15, p=0.7))
+                elif item == 'Af':
+                    #augment_list.append(K.RandomAffine(degrees=15, translate=0.1, shear=5, p=0.7, padding_mode='zeros', keepdim=True)) # border, reflection, zeros
+                    augment_list.append( 
+                        TT.RandomApply( 
+                            torch.nn.ModuleList( 
+                                [ TT.RandomAffine(degrees=15, translate=(0.1, 0.1), shear=5, interpolation = TT.InterpolationMode.BILINEAR ) ]
+                            ) 
+                            , p=0.7) 
+                        )
+
+                #elif item == 'Et':
+                   # augment_list.append(TT.RandomElasticTransform(p=0.7))
+                #elif item == 'Ts':
+                    #augment_list.append(TT.RandomThinPlateSpline(scale=0.8, same_on_batch=True, p=0.7))
+                elif item == 'Cr':
+                    augment_list.append(TT.RandomCrop(size=(cut_size_x,cut_size_y), pad_if_needed=True, padding_mode='reflect', p=0.5))
+                elif item == 'Er':
+                    augment_list.append(TT.RandomErasing(scale=(.1, .4), ratio=(.3, 1/.3), p=0.7)) #inplace=true ? faster? 
+                elif item == 'Re':
+                    augment_list.append(TT.RandomResizedCrop(size=(cut_size_x,cut_size_y), scale=(0.1,1),  ratio=(0.75,1.333), cropping_mode='resample', p=0.5))
+                else:
+                    print("torch augment not found or not supported: " + item)                    
+
 
     print("augment list: " + str(augment_list))
     return nn.Sequential(*augment_list)   
+
+
+###################
+##  string based switch statement 'factory'
+###################
+def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int, cutSize, cutPow:float, augmentNameList:list, use_kornia:bool = True ):
+    # Cutout class options:
+    # 'squish', 'latest','original','updated' or 'updatedpooling'
+    if cutMethod == 'latest':
+        cutMethod = "nerdy"
+
+    if cutSize[0] == 0:
+        cutSize[0] = clipPerceptorInputResolution
+
+    if cutSize[1] == 0:
+        cutSize[1] = clipPerceptorInputResolution    
+
+    cutsMatchClip = True 
+    if clipPerceptorInputResolution != cutSize or clipPerceptorInputResolution != cutSize[0] or clipPerceptorInputResolution != cutSize[1]:
+        cutsMatchClip = False
+
+    augs = setupAugmentList(augmentNameList, clipPerceptorInputResolution, clipPerceptorInputResolution, use_kornia)
+
+    print("Cutouts method: " + cutMethod + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
+
+    # used for whatever test cut thing im doing
+    if cutMethod == 'test':
+        make_cutouts = MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)
+
+    elif cutMethod == 'maskTest':
+        augs = [] #cant use these here yet
+        make_cutouts = MakeCutoutsMaskTest(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=False, augments=augs)
+
+    elif cutMethod == 'growFromCenter':
+        make_cutouts = MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)        
+    elif cutMethod == 'squish':        
+        make_cutouts = MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)
+    elif cutMethod == 'original':
+        make_cutouts = MakeCutoutsOrig(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augs)
+    elif cutMethod == 'nerdy':
+        make_cutouts = MakeCutoutsNerdy(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augs)
+    elif cutMethod == 'nerdyNoPool':
+        make_cutouts = MakeCutoutsNerdyNoPool(clipPerceptorInputResolution, cutNum, cut_pow=cutPow, augments=augs)
+    else:
+        print("Bad cut method selected")
+
+    return make_cutouts
+
+
+
 
 
 # modifiable pool / combo with original to create more detail in larger images
@@ -125,7 +185,7 @@ class MakeCutoutsSquish(nn.Module):
         self.clipRes = clipRes
         
         #self.augs = setupAugmentList(cut_size_x, cut_size_y)
-        self.augs = setupAugmentList(augments, self.clipRes, self.clipRes)
+        self.augs = augments
 
         self.noise_fac = 0.1
         # self.noise_fac = False
@@ -182,7 +242,7 @@ class MakeCutoutsNerdy(nn.Module):
         self.cut_size = cut_size
         self.cutn = cutn
         self.cut_pow = cut_pow # not used with pooling
-        self.augs = setupAugmentList(augments, cut_size, cut_size)
+        self.augs = augments
 
         self.noise_fac = 0.1
         # self.noise_fac = False
@@ -191,7 +251,7 @@ class MakeCutoutsNerdy(nn.Module):
         # Pooling
         self.av_pool = nn.AdaptiveAvgPool2d((self.cut_size, self.cut_size))
         self.max_pool = nn.AdaptiveMaxPool2d((self.cut_size, self.cut_size))
-
+    
     @autocast(enabled=use_mixed_precision)
     def forward(self, input):
         cutouts = []

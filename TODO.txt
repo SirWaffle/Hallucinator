@@ -4,6 +4,10 @@ Various things that need to be done, yes I'm too lazy to use a ticket tracking s
 - search for #TODO or # TODO for spots in code with notes
 
 
+NOTES:
+- torch transforms are faster, but dont seem to work out as well as the kornia augmentations
+
+
 TODOs:
 - fix the horrible constructors i made to get rid of global variable dependency on argparse things
 

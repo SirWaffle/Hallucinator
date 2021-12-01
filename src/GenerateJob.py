@@ -2,6 +2,7 @@ import sys
 import os
 import random
 import numpy as np
+from torch.functional import Tensor
 
 
 # shut off tqdm log spam by uncommenting the below
@@ -141,7 +142,8 @@ class GenerationJob:
                  spatialPromptConfig:SpatialPromptConfig = None, startingImage:str = None, imageSizeXY:tuple = [512, 512], 
                  cutNum:int = 32, cutSize:tuple = [0,0], cutPow:float = 1.0, augments:list = [], optimiserName:str = "Adam", stepSize:float = 0.1,
                  init_weight:float = 0., init_noise:str = "random", noise_prompt_seeds = [], noise_prompt_weights=[], prompt_frequency:int = 0,
-                 deterministic:int = 0, outputDir:str = './output/', outputFilename:str = 'output.png', save_freq:int = 50, save_seq:bool = False, save_best:bool = False):
+                 deterministic:int = 0, outputDir:str = './output/', outputFilename:str = 'output.png', save_freq:int = 50, save_seq:bool = False, 
+                 save_best:bool = False, useKorniaAugmentsInsteadOfTorchTransforms:bool = False):
 
         ## config variables passed in
         self.savedImageCount = 0    #used to track how many images we saved
@@ -170,6 +172,7 @@ class GenerationJob:
         self.noise_prompt_weights = noise_prompt_weights
         self.prompt_frequency = prompt_frequency
         self.deterministic = deterministic
+        self.korniaAugments = useKorniaAugmentsInsteadOfTorchTransforms
 
         self.spatialPromptConfig = spatialPromptConfig
 
@@ -277,25 +280,24 @@ class GenerationJob:
     ##############
     ##  Getters and converters
     ##############
-    def synth(self):
-        return self.hallucinatorInst.synth( self.quantizedImage, self.vqganGumbelEnabled)
-
-    def GerCurrentImageAsPIL(self) -> torch.Tensor:
-        out = self.synth()
-        return TF.to_pil_image(out[0].cpu())
+    def GetCurrentImageAsPIL(self) -> torch.Tensor:
+        return self.ConvertToPIL( self.GetCurrentImageSynthed() )
 
     def GetCurrentImageSynthed(self):
         return self.hallucinatorInst.synth( self.quantizedImage, self.vqganGumbelEnabled)
 
     def ConvertToPIL(self, synthedImage):
-        return TF.to_pil_image(synthedImage[0].cpu())
+        return TF.to_pil_image(synthedImage[0].detach().cpu())
 
 
     ######
     # save file functions
     #####
+    def SaveImageTensor( self, imgTensor:torch.Tensor, filenamePrefix:str = None, info:PngImagePlugin.PngInfo = None ):
+        self.SaveImage( self.ConvertToPIL(imgTensor), filenamePrefix, info)
+
     def SaveCurrentImage( self, filenamePrefix:str = None, info:PngImagePlugin.PngInfo = None ):
-        pilImage = self.GerCurrentImageAsPIL()
+        pilImage = self.GetCurrentImageAsPIL()
         self.SaveImage( pilImage, filenamePrefix, info)
 
     def SaveImage( self, pilImage, filenamePrefix:str = None, info:PngImagePlugin.PngInfo = None ):
@@ -392,14 +394,14 @@ class GenerationJob:
         #rough display
         if self.prompt_masks.size(0)>=3:
             print('first 3 masks')
-            TF.to_pil_image(self.prompt_masks[0,0].cpu()).save('ex-masks-0.png')   
-            TF.to_pil_image(self.prompt_masks[1,0].cpu()).save('ex-masks-1.png')
-            TF.to_pil_image(self.prompt_masks[2,0].cpu()).save('ex-masks-2.png')
-            TF.to_pil_image(self.prompt_masks[0:3,0].cpu()).save('ex-masks-comb.png')
+            TF.to_pil_image(self.prompt_masks[0,0].detach().cpu()).save('ex-masks-0.png')   
+            TF.to_pil_image(self.prompt_masks[1,0].detach().cpu()).save('ex-masks-1.png')
+            TF.to_pil_image(self.prompt_masks[2,0].detach().cpu()).save('ex-masks-2.png')
+            TF.to_pil_image(self.prompt_masks[0:3,0].detach().cpu()).save('ex-masks-comb.png')
             #display.display(display.Image('ex-masks.png')) 
             if self.prompt_masks.size(0)>=6:
                 print('next 3 masks')
-                TF.to_pil_image(self.prompt_masks[3:6,0].cpu()).save('ex-masks.png')   
+                TF.to_pil_image(self.prompt_masks[3:6,0].detach().cpu()).save('ex-masks.png') 
                 #display.display(display.Image('ex-masks.png')) 
         
         if any(self.blindfold):
@@ -455,7 +457,7 @@ class GenerationJob:
         self.InitStartingImage()
         self.InitSpatialPromptMasks()
 
-        self.CurrentCutoutMethod = makeCutouts.GetMakeCutouts( self.cut_method, self.clipPerceptorInputResolution, self.cutn, self.cut_size, self.cut_pow, self.augments )
+        self.CurrentCutoutMethod = makeCutouts.GetMakeCutouts( self.cut_method, self.clipPerceptorInputResolution, self.cutn, self.cut_size, self.cut_pow, self.augments, self.korniaAugments )
         
         # CLIP tokenize/encode
         if self.all_phrases and self.use_spatial_prompts:

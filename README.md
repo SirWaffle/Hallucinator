@@ -12,9 +12,9 @@ I have modified the original readme to reflect my repo - the first readme was we
 ## Change list from original repository
 - many changes to make this script more friendly when launched from a seperate process ( ie, discord bot )
 - minor memory usage reductions
-- minor performance improvements
+- Performance improvements
 - can now generate fully deterministic images, although its slower and can't be used with pooling and other features
-- code refactoring
+- code refactoring - single script is now broken up into classes and multiple scripts, to reduce clutter when scripting more behaviors into generation ( still a work in progress )
 - various new commandline options
 - for users with low RAM GPU's desperate to get more resolution, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM
 - ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different generation techniques
@@ -24,6 +24,9 @@ I have modified the original readme to reflect my repo - the first readme was we
 - stats, memory usage logging
 - clip analysis logging which may or may not be correct
 - cut method modifications for higher res images and different generative patterns
+- ability to toggle between kornia and torch augmentation/tranformations. Torch is faster, but doesn't give quite as good results
+- added various generation mods, which can be added via script: see GenerationScript.py for examples, and GenerationMods.py for whats available
+- added spatial masks ( needs refactoring/cleaning up still) from: https://colab.research.google.com/drive/1B9hPy1-6qhnRL3JNusFmfyWoYvjiJ1jq?usp=sharing#scrollTo=tLw9p5Rzacso
 
 ## roadmap
 - integration of more models and methods for generation

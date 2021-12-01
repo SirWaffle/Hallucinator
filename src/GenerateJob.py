@@ -143,7 +143,7 @@ class GenerationJob:
                  cutNum:int = 32, cutSize:tuple = [0,0], cutPow:float = 1.0, augments:list = [], optimiserName:str = "Adam", stepSize:float = 0.1,
                  init_weight:float = 0., init_noise:str = "random", noise_prompt_seeds = [], noise_prompt_weights=[], prompt_frequency:int = 0,
                  deterministic:int = 0, outputDir:str = './output/', outputFilename:str = 'output.png', save_freq:int = 50, save_seq:bool = False, 
-                 save_best:bool = False, useKorniaAugmentsInsteadOfTorchTransforms:bool = False):
+                 save_best:bool = False, useKorniaAugmentsInsteadOfTorchTransforms:bool = True):
 
         ## config variables passed in
         self.savedImageCount = 0    #used to track how many images we saved

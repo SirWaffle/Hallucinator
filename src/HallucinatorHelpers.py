@@ -1,5 +1,5 @@
-import Hallucinator
-import GenerateJob
+from src import Hallucinator
+from src import GenerateJob
 
 ###########################################
 #

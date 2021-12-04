@@ -1,20 +1,20 @@
 import sys
 import os
 import random
-from typing import Tuple
+from typing import Any, Tuple
 import numpy as np
 from tqdm import tqdm
 
-import GenerationMods
-import makeCutouts
-import imageUtils
-import GenerateJob
+from src import GenerationMods
+from src import MakeCutouts
+from src import GenerateJob
 
 #stuff im using from source instead of installs
 # i want to run clip from source, not an install. I have clip in a dir alongside this project
 # so i append the parent dir to the proj and we expect to find a folder named clip there
 sys.path.append('..\\')
 from CLIP import clip
+#from clip import clip
 
 
 # pip install taming-transformers doesn't work with Gumbel, but does not yet work with coco etc
@@ -27,7 +27,6 @@ from taming.modules.diffusionmodules import model
 
 import yaml
 from urllib.request import urlopen
-import gc
 
 from omegaconf import OmegaConf
 
@@ -44,13 +43,9 @@ from torch.cuda import get_device_properties
 
 import torch_optimizer
 
-import imageio
-
-from PIL import ImageFile, Image, PngImagePlugin, ImageChops
+from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-from subprocess import Popen, PIPE
-import re
 
 from torchvision.datasets import CIFAR100
 
@@ -84,12 +79,12 @@ class Hallucinator:
 
         #### class wide variables set with default values
         self.clipPerceptorInputResolution = None # set after loading clip
-        self.clipPerceptor = None # clip model
+        self.clipPerceptor: model.CLIP = None # clip model
         self.clipDevice = None # torch device clip model is loaded onto
         self.clipCifar100 = None #one shot clip model classes, used when logging clip info
 
         self.vqganDevice = None #torch device vqgan model is loaded onto
-        self.vqganModel = None #vqgan model
+        self.vqganModel: vqgan.VQModel = None #vqgan model
         self.vqganGumbelEnabled = False #vqgan gumbel model in use
         
         # From imagenet - Which is better?
@@ -158,7 +153,7 @@ class Hallucinator:
             z_q = self.vector_quantize(z.movedim(1, 3), self.vqganModel.quantize.embed.weight).movedim(3, 1)
         else:
             z_q = self.vector_quantize(z.movedim(1, 3), self.vqganModel.quantize.embedding.weight).movedim(3, 1)
-        return makeCutouts.clamp_with_grad(self.vqganModel.decode(z_q).add(1).div(2), 0, 1)
+        return MakeCutouts.clamp_with_grad(self.vqganModel.decode(z_q).add(1).div(2), 0, 1)
 
 
 
@@ -172,7 +167,7 @@ class Hallucinator:
         #variable_lr = args.step_size
         #optimizer_list = [['Adam',0.075],['AdamW',0.125],['Adagrad',0.2],['Adamax',0.125],['DiffGrad',0.075],['RAdam',0.125],['RMSprop',0.02]]
 
-
+        opt: torch.optim.Optimizer = None
         if opt_name == "Adam":
             opt = optim.Adam([quantizedImg], lr=opt_lr)	# LR=0.1 (Default)
         elif opt_name == "AdamW":
@@ -204,7 +199,7 @@ class Hallucinator:
         print("Using mixed precision: " + str(self.use_mixed_precision) )  
 
         #TODO hacky as fuck
-        makeCutouts.use_mixed_precision = self.use_mixed_precision
+        MakeCutouts.use_mixed_precision = self.use_mixed_precision
 
         if self.seed is None:
             self.seed = torch.seed()
@@ -216,7 +211,7 @@ class Hallucinator:
             print("Determinism at max: forcing a lot of things so this will work, no augs, non-pooling cut method, bad resampling")
 
             # need to make cutouts use deterministic stuff... probably not a good way
-            makeCutouts.deterministic = True
+            MakeCutouts.deterministic = True
 
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False # NR: True is a bit faster, but can lead to OOM. False is more deterministic.
@@ -334,69 +329,7 @@ class Hallucinator:
     ###############################
     @torch.inference_mode()
     def WriteLogClipResults(self, genJob:GenerateJob.GenerationJob, imgout:torch.Tensor):
-        #TODO properly manage initing the cifar100 stuff here if its not already
-
-        img = self.normalize(self.CurrentCutoutMethod(imgout))
-
-        if self.log_clip_oneshot:
-            #one shot identification
-            image_features = self.clipPerceptor.encode_image(img).float()
-
-            text_inputs = torch.cat([clip.tokenize(f"a photo of a {c}") for c in self.clipCifar100.classes]).to(self.clipDevice)
-            
-            text_features = self.clipPerceptor.encode_text(text_inputs).float()
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-
-            # Pick the top 5 most similar labels for the image
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-            similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-            values, indices = similarity[0].topk(5)
-
-            # Print the result
-            print("\nOne-shot predictions:\n")
-            for value, index in zip(values, indices):
-                print(f"{self.clipCifar100.classes[index]:>16s}: {100 * value.item():.2f}%")
-
-        if self.log_clip:
-            # prompt matching percentages
-            textins = []
-            promptPartStrs = []
-            if genJob.config.prompts:
-                for prompt in genJob.config.prompts:
-                    txt, weight, stop = genJob.split_prompt(prompt)  
-                    splitTxt = txt.split()
-                    for stxt in splitTxt:   
-                        promptPartStrs.append(stxt)       
-                        textins.append(clip.tokenize(stxt))
-                    for i in range(len(splitTxt) - 1):
-                        promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1])       
-                        textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1]))
-                    for i in range(len(splitTxt) - 2):
-                        promptPartStrs.append(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2])       
-                        textins.append(clip.tokenize(splitTxt[i] + " " + splitTxt[i + 1] + " " + splitTxt[i + 2]))                    
-
-            text_inputs = torch.cat(textins).to(self.clipDevice)
-            
-            image_features = self.clipPerceptor.encode_image(img).float()
-            text_features = self.clipPerceptor.encode_text(text_inputs).float()
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-
-            # Pick the top 5 most similar labels for the image
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
-            similarity = (100.0 * image_features @ text_features.T).softmax(dim=-1)
-            
-            top = 5
-            if top > similarity[0].size()[0]:
-                top = similarity[0].size()[0]
-
-            values, indices = similarity[0].topk(top)
-
-            # Print the result
-            print("\nPrompt matching predictions:\n")
-            for value, index in zip(values, indices):        
-                print(f"{promptPartStrs[index]:>16s}: {100 * value.item():.2f}%")   
+        pass
 
 
 
@@ -434,13 +367,12 @@ class Hallucinator:
                 if genJob.phraseCounter >= len(genJob.all_phrases):
                     genJob.phraseCounter = 0
                 
-                pMs = []
-                genJob.prompts = genJob.all_phrases[genJob.phraseCounter]
+                genJob.current_prompts = genJob.all_phrases[genJob.phraseCounter]
 
                 # Show user we're changing prompt                                
-                print(genJob.prompts)
+                print(genJob.current_prompts)
                 
-                for prompt in genJob.prompts:
+                for prompt in genJob.current_prompts:
                     genJob.EmbedTextPrompt(prompt)
 
                 genJob.phraseCounter += 1
@@ -485,7 +417,7 @@ class Hallucinator:
             print(" ")
 
             if self.log_clip:
-                self.WriteLogClipResults(curImg)
+                self.WriteLogClipResults(genJob, curImg)
                 print(" ")
 
             if self.log_mem:
@@ -511,7 +443,7 @@ class Hallucinator:
                 print("saving image for best error: " + str(lossAvg.item()))
                 genJob.bestErrorScore = lossAvg
                 genJob.SaveImageTensor( curImg, "lowest_error_")
-                
+
 
     def train(self, genJob:GenerateJob.GenerationJob, iteration:int):
         with torch.cuda.amp.autocast(self.use_mixed_precision):
@@ -530,8 +462,10 @@ class Hallucinator:
             lossAll = genJob.GetCutoutResults(clipEncodedImage, iteration)
 
             # see if this squaring helps with multiple prompts
+            lossSum:torch.Tensor = None
+
             if len( lossAll ) > 1:
-                total = None
+                total:torch.Tensor = None
                 for t in lossAll:
                     if total == None:
                         total = torch.square( t )
@@ -540,14 +474,17 @@ class Hallucinator:
 
                 lossSum = total
             else:
-                lossSum = sum(lossAll)
+                ret:Any = sum(lossAll)
+                assert( isinstance(ret, torch.Tensor) )
+                lossSum = ret
+
 
             if genJob.optimizer == "MADGRAD":
                 genJob.loss_idx.append(lossSum.item())
                 if iteration > 100: #use only 100 last looses to avg
-                    avg_loss = sum(self.loss_idx[iteration-100:])/len(self.loss_idx[iteration-100:]) 
+                    avg_loss = sum(genJob.loss_idx[iteration-100:])/len(genJob.loss_idx[iteration-100:]) 
                 else:
-                    avg_loss = sum(self.loss_idx)/len(self.loss_idx)
+                    avg_loss = sum(genJob.loss_idx)/len(genJob.loss_idx)
 
                 genJob.scheduler.step(avg_loss)
             

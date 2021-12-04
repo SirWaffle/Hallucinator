@@ -1,4 +1,4 @@
-import imageUtils
+from src import ImageUtils
 
 import torch
 from torch.cuda.amp import autocast
@@ -146,6 +146,8 @@ def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int,
     print("Cutouts method: " + cutMethod + " using cutSize: " + str(cutSize) + '  Matches clipres: ' + str(cutsMatchClip))
 
     # used for whatever test cut thing im doing
+    make_cutouts:nn.Module = None
+    
     if cutMethod == 'test':
         make_cutouts = MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)
 
@@ -223,7 +225,7 @@ class MakeCutoutsSquish(nn.Module):
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
                 cutouts.append(cutout)
             else:
-                cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
+                cutouts.append(ImageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
         batch = self.augs(torch.cat(cutouts, dim=0))
         
@@ -319,7 +321,7 @@ class MakeCutoutsNerdyNoPool(nn.Module):
             offsetx = torch.randint(0, sideX - size + 1, ())
             offsety = torch.randint(0, sideY - size + 1, ())
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
-            cutouts.append(imageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
+            cutouts.append(ImageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
         batch = self.augs(torch.cat(cutouts, dim=0))
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
@@ -348,7 +350,7 @@ class MakeCutoutsOrig(nn.Module):
             offsetx = torch.randint(0, sideX - size + 1, ())
             offsety = torch.randint(0, sideY - size + 1, ())
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
-            cutouts.append(imageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
+            cutouts.append(ImageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
 
         return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1), [] #TODO, make this return cordinates for masking a well
 
@@ -417,7 +419,7 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
                 cutouts.append(cutout)
             else:
-                cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
+                cutouts.append(ImageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
         batch = self.augs(torch.cat(cutouts, dim=0))
         
@@ -469,7 +471,7 @@ class MakeCutoutsOneSpot(MakeCutoutsSquish):
             cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
             cutouts.append(cutout)
         else:
-            cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
+            cutouts.append(ImageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
 
 
@@ -538,7 +540,7 @@ class MakeCutoutsMaskTest(nn.Module):
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
                 cutouts.append(cutout)
             else:
-                cutouts.append(imageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
+                cutouts.append(ImageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
             
         batch = self.augs(torch.cat(cutouts, dim=0))
         

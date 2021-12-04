@@ -4,10 +4,8 @@
 
 import abc
 from enum import Enum, auto
-import imageUtils
+from src import ImageUtils
 import numpy as np
-
-import imageUtils
 
 import torch
 from torch.nn import functional as F
@@ -84,10 +82,10 @@ class OriginalImageMask(IGenerationMod):
     def __init__(self, GenJob, maskPath: str = ''):
         super().__init__(GenJob)
 
-        self.maskPath = maskPath
-        self.original_image_tensor = None
-        self.image_mask_tensor = None
-        self.image_mask_tensor_invert = None
+        self.maskPath:str = maskPath
+        self.original_image_tensor:torch.Tensor = None      
+        self.image_mask_tensor:torch.Tensor = None          
+        self.image_mask_tensor_invert:torch.Tensor = None 
 
     def Initialize(self):
         original_pil = self.GenJob.GerCurrentImageAsPIL()
@@ -156,7 +154,7 @@ class ImageZoomer(IGenerationMod):
                                     
             # Zoom
             if self.zoom_scale != 1:
-                pil_image_zoom = imageUtils.zoom_at(pil_image, self.GenJob.ImageSizeX/2, self.GenJob.ImageSizeY/2, self.zoom_scale)
+                pil_image_zoom = ImageUtils.zoom_at(pil_image, self.GenJob.ImageSizeX/2, self.GenJob.ImageSizeY/2, self.zoom_scale)
             else:
                 pil_image_zoom = pil_image
             
@@ -211,7 +209,7 @@ class ImageZoomInFast(IGenerationMod):
 
             # TODO: this is currently non-deterministic
             zoomPortion = F.interpolate(zoomPortion, (h, w), mode='bicubic', align_corners=True)  
-            #zoomPortion = imageUtils.resample(zoomPortion, (h, w))
+            #zoomPortion = ImageUtils.resample(zoomPortion, (h, w))
 
             # TODO: can probably remove this and the unsqueeze below...
             imgTensor = torch.squeeze(zoomPortion)
@@ -271,4 +269,35 @@ class ChangePromptMod(IGenerationMod):
             self.GenJob.embededPrompts = []
 
         print('Changing prompt to: "' + self.prompt + '", from ' + str(self))
-        self.GenJob.EmbedTextPrompt(self.prompt)               
+        self.GenJob.EmbedTextPrompt(self.prompt)    
+
+
+
+class AddPromptMask(IGenerationMod):
+    def __init__(self, GenJob, prompt:str, maskImageFileName:str, dilateMaskAmount:int = 10, clearOtherPrompts:bool = False, cacheImageOnInit:bool = True):
+        super().__init__(GenJob)
+
+        self.prompt = prompt
+        self.maskImageFileName = maskImageFileName
+        self.clearOtherPrompts = clearOtherPrompts
+        self.cacheImageOnInit = cacheImageOnInit
+        self.imageTensor:torch.Tensor = None
+        self.dilateMaskAmount = dilateMaskAmount
+
+    def Initialize(self):
+        # load image into tensor? or we can do it when its time to add the mod, memory now vs. performance later...
+        if self.cacheImageOnInit:
+            #cache the image as a tensor here
+            self.imageTensor = ImageUtils.loadImageToTensor(self.maskImageFileName, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
+
+
+    def OnPreTrain(self, iteration: int ):
+        if self.imageTensor == None:
+            self.imageTensor = ImageUtils.loadImageToTensor(self.maskImageFileName, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
+        
+        print('Adding masked prompt for: "' + self.prompt + '", from ' + str(self))
+
+        # add to prompts list, embed, add to masks, make its index discoverable, ugh.
+        assert(False) # not implemented yet
+        pass
+

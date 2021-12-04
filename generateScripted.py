@@ -7,8 +7,8 @@ import gc
 
 sys.path.append('src')
 
-from src import cmdLineArgs
-cmdLineArgs.init()
+from src import CmdLineArgs
+CmdLineArgs.init()
 
 from src import Hallucinator
 from src import GenerationMods

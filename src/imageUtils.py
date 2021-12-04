@@ -5,6 +5,14 @@ import math
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torchvision.transforms import functional as TF
+
+
+def loadImageToTensor(fileName:str, resizeImageX:int, resizeImageY:int ) -> torch.Tensor:
+    img = Image.open(fileName)
+    img = img.convert('RGB')
+    img = img.resize((resizeImageX, resizeImageY), Image.LANCZOS)
+    return TF.to_tensor(img)
 
 def resize_image(image, out_size):
     ratio = image.size[0] / image.size[1]

@@ -36,8 +36,8 @@ from tqdm import tqdm
 
 sys.path.append('src')
 
-from src import cmdLineArgs
-cmdLineArgs.init()
+from src import CmdLineArgs
+CmdLineArgs.init()
 
 from src import Hallucinator
 
@@ -67,18 +67,18 @@ def checkin(i, losses, out):
     print("*************************************************")
 
     promptNum = 0
-    if cmdLineArgs.args.prompts and cmdLineArgs.args.use_spatial_prompts == False:
+    if CmdLineArgs.args.prompts and CmdLineArgs.args.use_spatial_prompts == False:
         for loss in losses:
-            print( "----> " + cmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
+            print( "----> " + CmdLineArgs.args.prompts[promptNum] + " - loss: " + str(loss.item()) )
             promptNum += 1
 
     print(" ")
 
-    if cmdLineArgs.args.log_clip:
+    if CmdLineArgs.args.log_clip:
         hallucinatorInst.WriteLogClipResults(out)
         print(" ")
 
-    if cmdLineArgs.args.log_mem:
+    if CmdLineArgs.args.log_mem:
         hallucinatorInst.log_torch_mem()
         print(" ")
 
@@ -99,20 +99,20 @@ def train(genJob, i):
 
     # stat updates and progress images
     with torch.inference_mode():
-        if i % cmdLineArgs.args.display_freq == 0:
+        if i % CmdLineArgs.args.display_freq == 0:
             checkin(i, lossAll, out)  
 
-        if i % cmdLineArgs.args.save_freq == 0:     
-            if cmdLineArgs.args.save_seq == False:
+        if i % CmdLineArgs.args.save_freq == 0:     
+            if CmdLineArgs.args.save_seq == False:
                 savedImageCount = i
             else:
                 savedImageCount = savedImageCount + 1
 
             info = PngImagePlugin.PngInfo()
-            info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-            hallucinatorInst.ConvertToPIL(out).save( build_filename_path( cmdLineArgs.args.output_dir, str(savedImageCount).zfill(5) + cmdLineArgs.args.output) , pnginfo=info)
+            info.add_text('comment', f'{CmdLineArgs.args.prompts}')
+            hallucinatorInst.ConvertToPIL(out).save( build_filename_path( CmdLineArgs.args.output_dir, str(savedImageCount).zfill(5) + CmdLineArgs.args.output) , pnginfo=info)
                             
-        if cmdLineArgs.args.save_best == True:
+        if CmdLineArgs.args.save_best == True:
 
             lossAvg = lossSum / len(lossAll)
 
@@ -120,8 +120,8 @@ def train(genJob, i):
                 print("saving image for best error: " + str(lossAvg.item()))
                 bestErrorScore = lossAvg
                 info = PngImagePlugin.PngInfo()
-                info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-                hallucinatorInst.ConvertToPIL(out).save( build_filename_path( cmdLineArgs.args.output_dir, "lowest_error_" + cmdLineArgs.args.output), pnginfo=info)
+                info.add_text('comment', f'{CmdLineArgs.args.prompts}')
+                hallucinatorInst.ConvertToPIL(out).save( build_filename_path( CmdLineArgs.args.output_dir, "lowest_error_" + CmdLineArgs.args.output), pnginfo=info)
 
 
 
@@ -137,56 +137,56 @@ def train(genJob, i):
 # #########################################################
 
 
-print("Args: " + str(cmdLineArgs.args) )
+print("Args: " + str(CmdLineArgs.args) )
 
 
-if cmdLineArgs.args.convert_to_json_cmd:
+if CmdLineArgs.args.convert_to_json_cmd:
     print("json command conversion mode should be finished, exiting")
     sys.exit()
 
-os.makedirs(os.path.dirname(cmdLineArgs.args.output_dir), exist_ok=True)
+os.makedirs(os.path.dirname(CmdLineArgs.args.output_dir), exist_ok=True)
 
 
 
-if not cmdLineArgs.args.prompts and not cmdLineArgs.args.image_prompts:
-    cmdLineArgs.args.prompts = "illustrated waffle, and a SquishBrain"
+if not CmdLineArgs.args.prompts and not CmdLineArgs.args.image_prompts:
+    CmdLineArgs.args.prompts = "illustrated waffle, and a SquishBrain"
 
-if not cmdLineArgs.args.augments:
-   cmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
-elif cmdLineArgs.args.augments == 'None':
+if not CmdLineArgs.args.augments:
+   CmdLineArgs.args.augments = [['Af', 'Pe', 'Ji', 'Er']]
+elif CmdLineArgs.args.augments == 'None':
     print("Augments set to none")
-    cmdLineArgs.args.augments = []
+    CmdLineArgs.args.augments = []
 
 
 #TODO: this all needs to be changed to command line args, or config files, or something. for now, this
 ## hacky mask testing shit for now
-#cmdLineArgs.args.spatial_prompts=[
+#CmdLineArgs.args.spatial_prompts=[
 #    ( (255,0,0), 0.1, '''teeth beksinski'''),
 #    ( (0,255,0), 0.1, '''demon gustave dore'''),
 #    ( (0,0,255), 0.1, '''eggs giger'''),
 #    ( (0,0,0), 0.1, '''stained glass'''),
 #]
 #
-#cmdLineArgs.args.append_to_prompts = ''
-#cmdLineArgs.args.prompt_key_image = './examples/4-color-mask.png'
-#cmdLineArgs.args.dilate_masks = 10
-#cmdLineArgs.args.use_spatial_prompts=True
+#CmdLineArgs.args.append_to_prompts = ''
+#CmdLineArgs.args.prompt_key_image = './examples/4-color-mask.png'
+#CmdLineArgs.args.dilate_masks = 10
+#CmdLineArgs.args.use_spatial_prompts=True
 #### /end hacky testing for spatial prompts
-cmdLineArgs.args.use_spatial_prompts = False
+CmdLineArgs.args.use_spatial_prompts = False
 
 
 # Do it
 
-hallucinatorInst = Hallucinator.Hallucinator(cmdLineArgs.args)
+hallucinatorInst = Hallucinator.Hallucinator(CmdLineArgs.args)
 hallucinatorInst.Initialize()
 
-genJob = hallucinatorInst.CreateNewGenerationJob(cmdLineArgs.args)
+genJob = hallucinatorInst.CreateNewGenerationJob(CmdLineArgs.args)
 
 # write out the input noise...
 out = genJob.GerCurrentImageAsPIL()
 info = PngImagePlugin.PngInfo()
-info.add_text('comment', f'{cmdLineArgs.args.prompts}')
-out.save( build_filename_path( cmdLineArgs.args.output_dir, str(0).zfill(5) + '_seed_' + cmdLineArgs.args.output ), pnginfo=info)
+info.add_text('comment', f'{CmdLineArgs.args.prompts}')
+out.save( build_filename_path( CmdLineArgs.args.output_dir, str(0).zfill(5) + '_seed_' + CmdLineArgs.args.output ), pnginfo=info)
 del out
 
 
@@ -205,19 +205,19 @@ try:
         while True:            
 
             # Change text prompt
-            if cmdLineArgs.args.prompt_frequency > 0:
-                if iteration % cmdLineArgs.args.prompt_frequency == 0 and iteration > 0:
+            if CmdLineArgs.args.prompt_frequency > 0:
+                if iteration % CmdLineArgs.args.prompt_frequency == 0 and iteration > 0:
                     # In case there aren't enough phrases, just loop
                     if phraseCounter >= len(hallucinatorInst.all_phrases):
                         phraseCounter = 0
                     
                     pMs = []
-                    cmdLineArgs.args.prompts = hallucinatorInst.all_phrases[phraseCounter]
+                    CmdLineArgs.args.prompts = hallucinatorInst.all_phrases[phraseCounter]
 
                     # Show user we're changing prompt                                
-                    print(cmdLineArgs.args.prompts)
+                    print(CmdLineArgs.args.prompts)
                     
-                    for prompt in cmdLineArgs.args.prompts:
+                    for prompt in CmdLineArgs.args.prompts:
                         hallucinatorInst.EmbedTextPrompt(prompt)
 
 
@@ -231,7 +231,7 @@ try:
            
             
             # Ready to stop yet?
-            if iteration == cmdLineArgs.args.max_iterations:
+            if iteration == CmdLineArgs.args.max_iterations:
 
                 hallucinatorInst.OnFinishGeneration(genJob, iteration)
 
@@ -239,13 +239,13 @@ try:
                 out = genJob.GetCurrentImageSynthed()                                  
                 img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
                 img = np.transpose(img, (1, 2, 0))
-                imageio.imwrite(build_filename_path(cmdLineArgs.args.output_dir, cmdLineArgs.args.output), np.array(img))                
+                imageio.imwrite(build_filename_path(CmdLineArgs.args.output_dir, CmdLineArgs.args.output), np.array(img))                
 
-                if cmdLineArgs.args.log_clip:    
+                if CmdLineArgs.args.log_clip:    
                     # write one for the console
                     hallucinatorInst.WriteLogClipResults(out)
                 	#write once to a file for easy grabbing outside of this script                
-                    text_file = open(build_filename_path( cmdLineArgs.args.output_dir, cmdLineArgs.args.output + ".txt"), "w")
+                    text_file = open(build_filename_path( CmdLineArgs.args.output_dir, CmdLineArgs.args.output + ".txt"), "w")
                     sys.stdout = text_file
                     hallucinatorInst.WriteLogClipResults(out)
                     sys.stdout = sys.stdout 

@@ -1,18 +1,13 @@
 import sys
 import os
 import random
+from typing import List
 import numpy as np
 from torch.functional import Tensor
 
-
-# shut off tqdm log spam by uncommenting the below
-from tqdm import tqdm
-# from functools import partialmethod
-# tqdm.__init__ = partialmethod(tqdm.__init__, disable=True)
-
-import makeCutouts
-import imageUtils
-import GenerationMods
+from src import MakeCutouts
+from src import ImageUtils
+from src import GenerationMods
 #import Hallucinator #circular reference in imports...
 
 #stuff im using from source instead of installs
@@ -20,6 +15,7 @@ import GenerationMods
 # so i append the parent dir to the proj and we expect to find a folder named clip there
 sys.path.append('..\\')
 from CLIP import clip
+#from clip import clip
 
 
 # pip install taming-transformers doesn't work with Gumbel, but does not yet work with coco etc
@@ -29,11 +25,7 @@ from taming.models import cond_transformer, vqgan
 
 
 
-import yaml
 from urllib.request import urlopen
-import gc
-
-from omegaconf import OmegaConf
 
 import torch
 from torch.cuda.amp import autocast
@@ -44,21 +36,11 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import transforms
 from torchvision.transforms import functional as TF
-from torch.cuda import get_device_properties
 
-import torch_optimizer
-
-import imageio
 
 from PIL import ImageFile, Image, PngImagePlugin, ImageChops
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-from subprocess import Popen, PIPE
-import re
-
-from torchvision.datasets import CIFAR100
  
-
 
 
 def build_filename_path( outputDir, filename ):
@@ -88,17 +70,18 @@ replace_grad = ReplaceGrad.apply
 
 
 class Prompt(nn.Module):
-    def __init__(self, embed, weight=1., stop=float('-inf'), textPrompt = None):
+    def __init__(self, embed, weight=1., stop=float('-inf'), textPrompt:str = None):
         super().__init__()
         self.register_buffer('embed', embed)
         self.register_buffer('weight', torch.as_tensor(weight))
-        self.register_buffer('stop', torch.as_tensor(stop))     
+        self.register_buffer('stop', torch.as_tensor(stop)) 
+
         self.TextPrompt = textPrompt
         if self.TextPrompt == None:
             self.TextPrompt = 'not a text prompt'
     
 
-    @autocast(enabled=makeCutouts.use_mixed_precision)
+    @autocast(enabled=MakeCutouts.use_mixed_precision)
     def forward(self, input):
         input_normed = F.normalize(input.unsqueeze(1), dim=2)
         embed_normed = F.normalize(self.embed.unsqueeze(0), dim=2)
@@ -139,8 +122,8 @@ class GenerationJob:
     # TODO: dont use argparse args, use a config / json / something
     # using argparseargs for now due to being in the middle of a refactor
     def __init__(self, hallucinatorInst, cut_method:str = "latest", totalIterations:int = 200, prompts:str = "A waffle and a squishbrain", image_prompts = [], 
-                 spatialPromptConfig:SpatialPromptConfig = None, startingImage:str = None, imageSizeXY:tuple = [512, 512], 
-                 cutNum:int = 32, cutSize:tuple = [0,0], cutPow:float = 1.0, augments:list = [], optimizerName:str = "Adam", stepSize:float = 0.1,
+                 spatialPromptConfig:SpatialPromptConfig = None, startingImage:str = None, imageSizeXY:tuple = (512, 512), 
+                 cutNum:int = 32, cutSize:tuple = (0,0), cutPow:float = 1.0, augments:list = [], optimizerName:str = "Adam", stepSize:float = 0.1,
                  init_weight:float = 0., init_noise:str = "random", noise_prompt_seeds = [], noise_prompt_weights=[], prompt_frequency:int = 0,
                  deterministic:int = 0, outputDir:str = './output/', outputFilename:str = 'output.png', save_freq:int = 50, save_seq:bool = False, 
                  save_best:bool = False, useKorniaAugmentsInsteadOfTorchTransforms:bool = True):
@@ -156,7 +139,7 @@ class GenerationJob:
 
         self.cut_method = cut_method
         self.totalIterations = totalIterations
-        self.prompts = prompts
+        self.current_prompts = prompts
         self.image_prompts = image_prompts
         self.init_image = startingImage
         self.size = imageSizeXY
@@ -200,29 +183,29 @@ class GenerationJob:
 
 
 
-        self.quantizedImage = None # source image thats fed into taming transformers
+        self.quantizedImage: torch.Tensor = None # source image thats fed into taming transformers
 
-        self.optimizer = None #currently in use optimizer        
+        self.optimizer: torch.optim.Optimizer = None #currently in use optimizer        
 
         # cuts
         self.CurrentCutoutMethod = None
 
         # prompts
-        self.embededPrompts = []
-        self.all_phrases = []
+        self.embededPrompts: List[Prompt] = []
+        self.all_phrases: List[str] = []
 
         #### these need better names, wtf are they exactly?
         self.z_min = None
         self.z_max = None
         self.toksY = None
         self.toksX = None
-        self.ImageSizeX = None
-        self.ImageSizeY = None
-        self.original_quantizedImage = None
+        self.ImageSizeX:int = None
+        self.ImageSizeY:int = None
+        self.original_quantizedImage:torch.Tensor = None
 
         #MADGRAD related, needs better naming
-        self.loss_idx = []
-        self.scheduler = None
+        self.loss_idx: List[float] = []
+        self.scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau = None
 
         #mixed precision scaler
         self.gradScaler = GradScaler()
@@ -239,12 +222,12 @@ class GenerationJob:
         self.num_prompts = 0
         self.blur_conv = None
         self.prompt_masks = None
-        self.blindfold = []
+        self.blindfold: List[float] = []
         self.noise_fac = 0.1
 
 
         #image modifications
-        self.ImageModifiers = []
+        self.ImageModifiers: List[GenerationMods.GenerationModContainer] = []
 
 
 
@@ -326,9 +309,6 @@ class GenerationJob:
         #Make prompt masks
         img = Image.open(self.spatialPromptConfig.prompt_key_image)
         pil_image = img.convert('RGB')
-        #pil_image = pil_image.resize((sideX, sideY), Image.LANCZOS)
-        #pil_tensor = TF.to_tensor(pil_image)
-        #self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
 
         prompt_key_image = np.asarray(pil_image)
 
@@ -433,10 +413,10 @@ class GenerationJob:
 
         if self.deterministic >= 2:
             print("GenerationJob Determinism at max: forcing a lot of things so this will work, no augs, non-pooling cut method, bad resampling")
-            self.augments = "none"
+            self.augments = "None"
             self.cut_method = "original"
             # need to make cutouts use deterministic stuff... probably not a good way
-            makeCutouts.deterministic = True
+            MakeCutouts.deterministic = True
         elif self.deterministic == 1:
             print("GenerationJob Determinism at medium: no changes needed")
         else:
@@ -457,23 +437,23 @@ class GenerationJob:
         self.InitStartingImage()
         self.InitSpatialPromptMasks()
 
-        self.CurrentCutoutMethod = makeCutouts.GetMakeCutouts( self.cut_method, self.clipPerceptorInputResolution, self.cutn, self.cut_size, self.cut_pow, self.augments, self.korniaAugments )
+        self.CurrentCutoutMethod = MakeCutouts.GetMakeCutouts( self.cut_method, self.clipPerceptorInputResolution, self.cutn, self.cut_size, self.cut_pow, self.augments, self.korniaAugments )
         
         # CLIP tokenize/encode
         if self.all_phrases and self.use_spatial_prompts:
             print("using masking images")
             for prompt in self.all_phrases:
                 self.EmbedTextPrompt(prompt)
-        elif self.prompts:
+        elif self.current_prompts:
             print("using standard prompts")
-            for prompt in self.prompts:
+            for prompt in self.current_prompts:
                 self.EmbedTextPrompt(prompt)
 
         for prompt in self.image_prompts:
             path, weight, stop = split_prompt(prompt)
             img = Image.open(path)
             pil_image = img.convert('RGB')
-            img = imageUtils.resize_image(pil_image, (self.ImageSizeX, self.ImageSizeY))
+            img = ImageUtils.resize_image(pil_image, (self.ImageSizeX, self.ImageSizeY))
             batch = self.CurrentCutoutMethod(TF.to_tensor(img).unsqueeze(0).to(self.clipDevice))
             embed = self.clipPerceptor.encode_image(self.normalize(batch)).float()
             self.embededPrompts.append(Prompt(embed, weight, stop).to(self.clipDevice))
@@ -496,8 +476,8 @@ class GenerationJob:
         # Output for the user
         print('Optimising using:', self.optimizer)
 
-        if self.prompts:
-            print('Using text prompts:', self.prompts)  
+        if self.current_prompts:
+            print('Using text prompts:', self.current_prompts)  
         if self.image_prompts:
             print('Using image prompts:', self.image_prompts)
         if self.init_image:
@@ -511,7 +491,7 @@ class GenerationJob:
     ### Helper type methods
     #####################
 
-    def EmbedTextPrompt(self, prompt):
+    def EmbedTextPrompt(self, prompt:str):
         txt, weight, stop = split_prompt(prompt)
         embed = self.clipPerceptor.encode_text(clip.tokenize(txt).to(self.clipDevice)).float()
         self.embededPrompts.append(Prompt(embed, weight, stop, txt).to(self.clipDevice))
@@ -519,16 +499,16 @@ class GenerationJob:
 
     def InitPrompts(self):
         # Split text prompts using the pipe character (weights are split later)
-        if self.prompts:
+        if self.current_prompts:
             # For stories, there will be many phrases
-            story_phrases = [phrase.strip() for phrase in self.prompts.split("^")]
+            story_phrases = [phrase.strip() for phrase in self.current_prompts.split("^")]
             
             # Make a list of all phrases
             for phrase in story_phrases:
                 self.all_phrases.append(phrase.split("|"))
             
             # First phrase
-            self.prompts = self.all_phrases[0]
+            self.current_prompts = self.all_phrases[0]
             
         # Split target images using the pipe character (weights are split later)
         if self.image_prompts:
@@ -570,13 +550,13 @@ class GenerationJob:
                 print( 'first encoding -> pil_tensor size: ' + str( pil_tensor.size() ) )
                 self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
         elif self.init_noise == 'pixels':
-            img = imageUtils.random_noise_image(self.size[0], self.size[1])    
+            img = ImageUtils.random_noise_image(self.size[0], self.size[1])    
             pil_image = img.convert('RGB')
             pil_image = pil_image.resize((self.ImageSizeX, self.ImageSizeY), Image.LANCZOS)
             pil_tensor = TF.to_tensor(pil_image)
             self.quantizedImage, *_ = self.vqganModel.encode(pil_tensor.to(self.vqganDevice).unsqueeze(0) * 2 - 1)
         elif self.init_noise == 'gradient':
-            img = imageUtils.random_gradient_image(self.size[0], self.size[1])
+            img = ImageUtils.random_gradient_image(self.size[0], self.size[1])
             pil_image = img.convert('RGB')
             pil_image = pil_image.resize((self.ImageSizeX, self.ImageSizeY), Image.LANCZOS)
             pil_tensor = TF.to_tensor(pil_image)
@@ -618,7 +598,7 @@ class GenerationJob:
             cutout_prompt_masks = []
             for (x1,x2,y1,y2) in cutout_coords:
                 cutout_mask = self.prompt_masks[:,:,y1:y2,x1:x2]
-                cutout_mask = makeCutouts.resample(cutout_mask, (cut_size[0], cut_size[1]))
+                cutout_mask = MakeCutouts.resample(cutout_mask, (cut_size[0], cut_size[1]))
                 cutout_prompt_masks.append(cutout_mask)
             cutout_prompt_masks = torch.stack(cutout_prompt_masks,dim=1) #-> prompts X cutouts X color X H X W
             

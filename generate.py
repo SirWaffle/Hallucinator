@@ -5,10 +5,10 @@
 import sys
 import gc
 
-sys.path.append('src')
+#sys.path.append('src')
 
-from src import cmdLineArgs
-cmdLineArgs.init()
+from src import CmdLineArgs
+CmdLineArgs.init()
 
 from src import Hallucinator
 from src import HallucinatorHelpers
@@ -24,17 +24,17 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 #################################
 
 # create the hallucinator class from commandline args
-hallucinatorInst = HallucinatorHelpers.CreateHallucinatorFromArgParse( cmdLineArgs.args )
+hallucinatorInst = HallucinatorHelpers.CreateHallucinatorFromArgParse( CmdLineArgs.args )
 hallucinatorInst.Initialize()
 
 
 # create a job from the same argparse args
-genJob = HallucinatorHelpers.CreateGenerationJobFromArgParse( hallucinatorInst, cmdLineArgs.args )
+genJob = HallucinatorHelpers.CreateGenerationJobFromArgParse( hallucinatorInst, CmdLineArgs.args )
 genJob.Initialize()
 
 # write out the input noise...
 info = PngImagePlugin.PngInfo()
-info.add_text('comment', f'hallucinator prompt: {cmdLineArgs.args.prompts}')
+info.add_text('comment', f'hallucinator prompt: {CmdLineArgs.args.prompts}')
 genJob.SaveCurrentImage( str(0).zfill(5) + '_seed_', info)
 
 # flush, clean, go

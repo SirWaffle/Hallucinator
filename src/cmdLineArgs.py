@@ -6,7 +6,7 @@ import copy
 import sys
 
 # this is used globally until i clean this all up
-args = None
+args:argparse.Namespace = None
 
 def init():
     global args

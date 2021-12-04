@@ -17,7 +17,15 @@ from PIL import ImageFile, Image, ImageChops
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
  
-
+# TODO: this may be better off not being a sign of 'when' the mod should apply, since most will be during the training loop
+# but what the mod applies to, and therefor what needs updating when the mod does its thing
+# ex: 
+#   ImageMod requires re-encoding and redoing the zer, 
+#   prompt mods need to re-encode with clip, 
+#
+# and in the future, these mods will be turned into more of a 'command' pattern, to modify stuff from art program plugins
+# so there will be things like:
+#    LoadNewImage, ResetOptimizer, ChangeLearningRate, ChangeOptimizer, ChangeCutouts, all of which require different things to be redone / different ways to handle
 class GenerationModStage(Enum):
     PreTrain = auto() #pretraining step, mods happen before the next training step
     FinishedGeneration = auto() #happens when the generation of the image is finished
@@ -27,24 +35,22 @@ class IGenerationMod(metaclass=abc.ABCMeta):
 
     @classmethod
     def __subclasshook__(cls, subclass):
-        return (hasattr(subclass, 'ShouldApply') and 
-                callable(subclass.ShouldApply) and 
-                hasattr(subclass, 'OnPreTrain') and 
+        return (hasattr(subclass, 'OnPreTrain') and 
                 callable(subclass.OnPreTrain) or 
                 NotImplemented)
 
-    def __init__(self, GenJob):
+    def __init__(self, GenJob, ModStage:GenerationModStage = GenerationModStage.PreTrain):
         super().__init__()
 
-        self.GenJob = GenJob        
+        self.GenJob = GenJob  
+        self.ModStage = ModStage      
 
     @abc.abstractmethod
     def Initialize(self):
         raise NotImplementedError
 
-    @abc.abstractmethod
     def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        return True
+        return stage.value == self.ModStage.value
 
     @abc.abstractmethod
     def OnPreTrain(self, iteration: int ):
@@ -59,14 +65,12 @@ class GenerationModContainer:
         self.endIt = endIt
         self.mod = mod
 
-    def IsIterationInRange(self, iteration: int) -> bool:
-        if iteration < self.startIt or iteration > self.endIt:
-            return False 
-        return True
-
     def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
         if self.mod.ShouldApply(stage, iteration):
-            return self.IsIterationInRange(iteration) and iteration % self.freq == 0
+            if iteration >= self.startIt and iteration <= self.endIt:
+                iterationDelta = iteration - self.startIt
+                if  iterationDelta % self.freq == 0:
+                    return True
         return False
 
     def OnPreTrain(self, iteration: int ):
@@ -102,15 +106,9 @@ class OriginalImageMask(IGenerationMod):
         self.image_mask_tensor = torch.logical_not( self.image_mask_tensor_invert )
 
 
-    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        if stage.value != GenerationModStage.PreTrain.value:
-            return False
-        return True
-
-
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            curQuantImg = self.GenJob.synth()
+            curQuantImg = self.GenJob.GetCurrentImageSynthed()
 
             #this removes the first dim sized 1 to match the rest
             curQuantImg = torch.squeeze(curQuantImg)
@@ -124,7 +122,7 @@ class OriginalImageMask(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)
+        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)
 
 
 
@@ -145,15 +143,9 @@ class ImageZoomer(IGenerationMod):
         pass
 
 
-    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        if stage.value != GenerationModStage.PreTrain.value:
-            return False
-        return True
-
-
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            out = self.GenJob.synth()
+            out = self.GenJob.GetCurrentImageSynthed()
             
             # Save image
             img = np.array(out.mul(255).clamp(0, 255)[0].cpu().detach().numpy().astype(np.uint8))[:,:,:]
@@ -181,7 +173,7 @@ class ImageZoomer(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)
+        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)
 
 
 # faster tensor based image zoomer, but only zooms in for now
@@ -201,16 +193,9 @@ class ImageZoomInFast(IGenerationMod):
     def Initialize(self):
         pass
 
-
-    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        if stage.value != GenerationModStage.PreTrain.value:
-            return False
-        return True
-
-
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            imgTensor = self.GenJob.synth()
+            imgTensor = self.GenJob.GetCurrentImageSynthed()
 
             n, c, h, w = imgTensor.shape
 
@@ -234,9 +219,9 @@ class ImageZoomInFast(IGenerationMod):
         # Re-encode original?
         self.GenJob.quantizedImage, *_ = self.GenJob.vqganModel.encode(imgTensor.to(self.GenJob.vqganDevice).unsqueeze(0) * 2 - 1)
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
-        
+
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)
+        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)
 
 
 
@@ -252,15 +237,9 @@ class ImageRotate(IGenerationMod):
         pass
 
 
-    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        if stage.value != GenerationModStage.PreTrain.value:
-            return False
-        return True
-
-
     def OnPreTrain(self, iteration: int ):
         with torch.inference_mode():
-            curQuantImg = self.GenJob.synth()
+            curQuantImg = self.GenJob.GetCurrentImageSynthed()
 
             #this removes the first dim sized 1 to match the rest
             curQuantImg = torch.squeeze(curQuantImg)
@@ -272,7 +251,7 @@ class ImageRotate(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimiser = self.GenJob.hallucinatorInst.get_optimiser(self.GenJob.quantizedImage, self.GenJob.optimiserName, self.GenJob.step_size)                
+        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)                
 
 
 
@@ -285,12 +264,6 @@ class ChangePromptMod(IGenerationMod):
 
     def Initialize(self):
         pass
-
-
-    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        if stage.value != GenerationModStage.PreTrain.value:
-            return False
-        return True
 
 
     def OnPreTrain(self, iteration: int ):

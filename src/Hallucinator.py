@@ -64,7 +64,7 @@ from torchvision.datasets import CIFAR100
 class Hallucinator:
 
     def __init__(self, clipModel:str = 'ViT-B/32', vqgan_config_path:str = 'checkpoints/vqgan_imagenet_f16_16384.yaml', vqgan_checkpoint_path:str = 'checkpoints/vqgan_imagenet_f16_16384.ckpt', 
-                 use_mixed_precision:bool = False, clip_cpu:bool = False, randomSeed:int = None, cuda_device:str = "cuda:0", anomaly_checker:bool = False, deterministic:int = 0, 
+                 use_mixed_precision:bool = False, clip_cpu:bool = False, randomSeed:int = None, cuda_device:str = "cuda:0", anomaly_checker:bool = False, deterministic:int = 1, 
                  log_clip:bool = False, log_clip_oneshot:bool = False, log_mem:bool = False, display_freq:int = 50 ):
 
         ## passed in settings
@@ -163,14 +163,14 @@ class Hallucinator:
 
 
     ########################
-    # get the optimiser ###
+    # get the optimizer ###
     ########################
-    def get_optimiser(self, quantizedImg:torch.Tensor, opt_name:str, opt_lr:float):
+    def get_optimizer(self, quantizedImg:torch.Tensor, opt_name:str, opt_lr:float):
 
         # from nerdy project, potential learning rate tweaks?
-        # Messing with learning rate / optimisers
+        # Messing with learning rate / optimizers
         #variable_lr = args.step_size
-        #optimiser_list = [['Adam',0.075],['AdamW',0.125],['Adagrad',0.2],['Adamax',0.125],['DiffGrad',0.075],['RAdam',0.125],['RMSprop',0.02]]
+        #optimizer_list = [['Adam',0.075],['AdamW',0.125],['Adagrad',0.2],['Adamax',0.125],['DiffGrad',0.075],['RAdam',0.125],['RMSprop',0.02]]
 
 
         if opt_name == "Adam":
@@ -190,7 +190,7 @@ class Hallucinator:
         elif opt_name == "MADGRAD":
             opt = torch_optimizer.MADGRAD([quantizedImg], lr=opt_lr)      
         else:
-            print("Unknown optimiser. Are choices broken?")
+            print("Unknown optimizer. Are choices broken?")
             opt = optim.Adam([quantizedImg], lr=opt_lr)
         return opt
 
@@ -469,7 +469,31 @@ class Hallucinator:
     def DefaultTrainCallback(self, genJob:GenerateJob.GenerationJob, iteration:int, curImg, lossAll, lossSum):
         # stat updates and progress images
         if iteration % self.display_freq == 0 and iteration != 0:
-            self.DefaultCheckinLogging(genJob, iteration, lossAll, curImg)  
+            print("\n*************************************************")
+            print(f'i: {iteration}, loss sum: {lossSum.item():g}')
+            print("*************************************************")
+
+            promptNum = 0
+            lossLen = len(lossAll)
+            if genJob.embededPrompts and lossLen <= len(genJob.embededPrompts):
+                for loss in lossAll:            
+                    print( "----> " + genJob.embededPrompts[promptNum].TextPrompt + " - loss: " + str( loss.item() ) )
+                    promptNum += 1
+            else:
+                print("mismatch in prompt numbers and losses!")
+
+            print(" ")
+
+            if self.log_clip:
+                self.WriteLogClipResults(curImg)
+                print(" ")
+
+            if self.log_mem:
+                self.log_torch_mem()
+                print(" ")
+
+            print(" ")
+            sys.stdout.flush()  
 
         if iteration % genJob.save_freq == 0 and iteration != 0:     
             if genJob.save_seq == True:
@@ -487,41 +511,14 @@ class Hallucinator:
                 print("saving image for best error: " + str(lossAvg.item()))
                 genJob.bestErrorScore = lossAvg
                 genJob.SaveImageTensor( curImg, "lowest_error_")
+                
 
-
-    @torch.inference_mode()
-    def DefaultCheckinLogging(self, genJob:GenerateJob.GenerationJob, i:int, losses, out):
-        print("\n*************************************************")
-        print(f'i: {i}, loss sum: {sum(losses).item():g}')
-        print("*************************************************")
-
-        promptNum = 0
-        lossLen = len(losses)
-        if genJob.embededPrompts and lossLen <= len(genJob.embededPrompts):
-            for loss in losses:            
-                print( "----> " + genJob.embededPrompts[promptNum].TextPrompt + " - loss: " + str( loss.item() ) )
-                promptNum += 1
-        else:
-            print("mismatch in prompt numbers and losses!")
-
-        print(" ")
-
-        if self.log_clip:
-            self.WriteLogClipResults(out)
-            print(" ")
-
-        if self.log_mem:
-            self.log_torch_mem()
-            print(" ")
-
-        print(" ")
-        sys.stdout.flush()       
-
-
-
-    def ascend_txt(self, genJob:GenerateJob.GenerationJob, iteration:int, synthedImage:torch.Tensor):
+    def train(self, genJob:GenerateJob.GenerationJob, iteration:int):
         with torch.cuda.amp.autocast(self.use_mixed_precision):
-
+            genJob.optimizer.zero_grad(set_to_none=True)
+            
+            synthedImage = self.synth(genJob.quantizedImage, genJob.vqganGumbelEnabled) 
+            
             cutouts = genJob.GetCutouts(synthedImage)
 
             if self.clipDevice != self.vqganDevice:
@@ -530,21 +527,22 @@ class Hallucinator:
                 clipEncodedImage = self.clipPerceptor.encode_image(self.normalize(cutouts)).float()
 
             
-            result = genJob.GetCutoutResults(clipEncodedImage, iteration)
-            
-            return result # return loss
+            lossAll = genJob.GetCutoutResults(clipEncodedImage, iteration)
 
+            # see if this squaring helps with multiple prompts
+            if len( lossAll ) > 1:
+                total = None
+                for t in lossAll:
+                    if total == None:
+                        total = torch.square( t )
+                    else:
+                        total += torch.square( t )
 
-    def train(self, genJob:GenerateJob.GenerationJob, iteration:int):
-        with torch.cuda.amp.autocast(self.use_mixed_precision):
-            genJob.optimiser.zero_grad(set_to_none=True)
-            
-            synthedImage = self.synth(genJob.quantizedImage, genJob.vqganGumbelEnabled) 
-            
-            lossAll = self.ascend_txt(genJob, iteration, synthedImage)
-            lossSum = sum(lossAll)
+                lossSum = total
+            else:
+                lossSum = sum(lossAll)
 
-            if genJob.optimiser == "MADGRAD":
+            if genJob.optimizer == "MADGRAD":
                 genJob.loss_idx.append(lossSum.item())
                 if iteration > 100: #use only 100 last looses to avg
                     avg_loss = sum(self.loss_idx[iteration-100:])/len(self.loss_idx[iteration-100:]) 
@@ -555,10 +553,10 @@ class Hallucinator:
             
             if self.use_mixed_precision == False:
                 lossSum.backward()
-                genJob.optimiser.step()
+                genJob.optimizer.step()
             else:
                 genJob.gradScaler.scale(lossSum).backward()
-                genJob.gradScaler.step(genJob.optimiser)
+                genJob.gradScaler.step(genJob.optimizer)
                 genJob.gradScaler.update()
             
             with torch.inference_mode():

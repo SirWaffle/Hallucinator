@@ -38,7 +38,7 @@ def init():
     vq_parser.add_argument("-npw",  "--noise_prompt_weights", nargs="*", type=float, help="Noise prompt weights", default=[], dest='noise_prompt_weights')
     vq_parser.add_argument("-lr",   "--learning_rate", type=float, help="Learning rate", default=0.1, dest='step_size')
     vq_parser.add_argument("-sd",   "--seed", type=int, help="Seed", default=None, dest='seed')
-    vq_parser.add_argument("-opt",  "--optimiser", type=str, help="Optimiser", choices=['Adam','AdamW','Adagrad','Adamax','DiffGrad','AdamP','RMSprop','MADGRAD'], default='Adam', dest='optimiser')    
+    vq_parser.add_argument("-opt",  "--optimizer", type=str, help="Optimizer", choices=['Adam','AdamW','Adagrad','Adamax','DiffGrad','AdamP','RMSprop','MADGRAD'], default='Adam', dest='optimizer')    
     vq_parser.add_argument("-cpe",  "--change_prompt_every", type=int, help="Prompt change frequency", default=0, dest='prompt_frequency')    
     vq_parser.add_argument("-aug",  "--augments", nargs='+', action='append', type=str, choices=['None','Ji','Sh','Gn','Pe','Ro','Af','Et','Ts','Cr','Er','Re'], help="Enabled augments (latest vut method only)", default=[], dest='augments')
     vq_parser.add_argument("-cd",   "--cuda_device", type=str, help="Cuda device to use", default="cuda:0", dest='cuda_device')

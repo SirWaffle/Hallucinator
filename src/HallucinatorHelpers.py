@@ -26,7 +26,7 @@ def CreateGenerationJobFromArgParse( hallucinatorInst:Hallucinator.Hallucinator,
     genJob = GenerateJob.GenerationJob( hallucinatorInst, cut_method = args.cut_method, totalIterations = args.max_iterations, prompts = args.prompts,
                                         image_prompts = args.image_prompts, startingImage = args.init_image, imageSizeXY = args.size, 
                                         cutNum=args.cutn, cutSize=args.cut_size, cutPow=args.cut_pow, augments=args.augments,
-                                        optimiserName=args.optimiser,init_weight=args.init_weight, init_noise=args.init_noise,
+                                        optimizerName=args.optimizer,init_weight=args.init_weight, init_noise=args.init_noise,
                                         noise_prompt_seeds=args.noise_prompt_seeds, noise_prompt_weights=args.noise_prompt_weights, prompt_frequency=args.prompt_frequency,
                                         deterministic = args.deterministic, outputDir = args.output_dir, outputFilename = args.output, save_freq = args.save_freq,
                                         save_seq = args.save_seq, save_best = args.save_best)

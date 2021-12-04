@@ -140,7 +140,7 @@ class GenerationJob:
     # using argparseargs for now due to being in the middle of a refactor
     def __init__(self, hallucinatorInst, cut_method:str = "latest", totalIterations:int = 200, prompts:str = "A waffle and a squishbrain", image_prompts = [], 
                  spatialPromptConfig:SpatialPromptConfig = None, startingImage:str = None, imageSizeXY:tuple = [512, 512], 
-                 cutNum:int = 32, cutSize:tuple = [0,0], cutPow:float = 1.0, augments:list = [], optimiserName:str = "Adam", stepSize:float = 0.1,
+                 cutNum:int = 32, cutSize:tuple = [0,0], cutPow:float = 1.0, augments:list = [], optimizerName:str = "Adam", stepSize:float = 0.1,
                  init_weight:float = 0., init_noise:str = "random", noise_prompt_seeds = [], noise_prompt_weights=[], prompt_frequency:int = 0,
                  deterministic:int = 0, outputDir:str = './output/', outputFilename:str = 'output.png', save_freq:int = 50, save_seq:bool = False, 
                  save_best:bool = False, useKorniaAugmentsInsteadOfTorchTransforms:bool = True):
@@ -164,7 +164,7 @@ class GenerationJob:
         self.cut_size = cutSize
         self.cut_pow = cutPow
         self.augments = augments
-        self.optimiserName = optimiserName
+        self.optimizerName = optimizerName
         self.step_size = stepSize
         self.init_weight = init_weight
         self.init_noise = init_noise
@@ -202,7 +202,7 @@ class GenerationJob:
 
         self.quantizedImage = None # source image thats fed into taming transformers
 
-        self.optimiser = None #currently in use optimiser        
+        self.optimizer = None #currently in use optimizer        
 
         # cuts
         self.CurrentCutoutMethod = None
@@ -483,10 +483,10 @@ class GenerationJob:
             embed = torch.empty([1, self.clipPerceptor.visual.output_dim]).normal_(generator=gen)
             self.embededPrompts.append(Prompt(embed, weight).to(self.clipDevice))
 
-        self.optimiser = self.hallucinatorInst.get_optimiser(self.quantizedImage, self.optimiserName, self.step_size)
+        self.optimizer = self.hallucinatorInst.get_optimizer(self.quantizedImage, self.optimizerName, self.step_size)
 
-        if self.optimiser == "MADGRAD":
-            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimiser, 'min', factor=0.999, patience=0)  
+        if self.optimizer == "MADGRAD":
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor=0.999, patience=0)  
 
         #for mod in self.ImageModifiers:
         #    print('Initializing modifier: ' + str(mod))
@@ -494,7 +494,7 @@ class GenerationJob:
 
 
         # Output for the user
-        print('Optimising using:', self.optimiser)
+        print('Optimising using:', self.optimizer)
 
         if self.prompts:
             print('Using text prompts:', self.prompts)  

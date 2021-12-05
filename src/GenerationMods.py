@@ -33,8 +33,8 @@ class IGenerationMod(metaclass=abc.ABCMeta):
 
     @classmethod
     def __subclasshook__(cls, subclass):
-        return (hasattr(subclass, 'OnPreTrain') and 
-                callable(subclass.OnPreTrain) or 
+        return (hasattr(subclass, 'OnExecute') and 
+                callable(subclass.OnExecute) or 
                 NotImplemented)
 
     def __init__(self, GenJob, ModStage:GenerationModStage = GenerationModStage.PreTrain):
@@ -51,7 +51,7 @@ class IGenerationMod(metaclass=abc.ABCMeta):
         return stage.value == self.ModStage.value
 
     @abc.abstractmethod
-    def OnPreTrain(self, iteration: int ):
+    def OnExecute(self, iteration: int ):
         raise NotImplementedError
 
 
@@ -71,8 +71,8 @@ class GenerationModContainer:
                     return True
         return False
 
-    def OnPreTrain(self, iteration: int ):
-        self.mod.OnPreTrain(iteration)
+    def OnExecute(self, iteration: int ):
+        self.mod.OnExecute(iteration)
 
 
 
@@ -106,7 +106,7 @@ class OriginalImageMask(IGenerationMod):
             self.image_mask_tensor = torch.logical_not( self.image_mask_tensor_invert )
 
 
-    def OnPreTrain(self, iteration: int ):
+    def OnExecute(self, iteration: int ):
         with torch.inference_mode():
             curQuantImg = self.GenJob.GetCurrentImageSynthed()
 
@@ -143,7 +143,7 @@ class ImageZoomer(IGenerationMod):
         pass
 
 
-    def OnPreTrain(self, iteration: int ):
+    def OnExecute(self, iteration: int ):
         with torch.inference_mode():
             out = self.GenJob.GetCurrentImageSynthed()
             
@@ -196,7 +196,7 @@ class ImageZoomInFast(IGenerationMod):
     def Initialize(self):
         pass
 
-    def OnPreTrain(self, iteration: int ):
+    def OnExecute(self, iteration: int ):
         with torch.inference_mode():
             imgTensor = self.GenJob.GetCurrentImageSynthed()
 
@@ -240,7 +240,7 @@ class ImageRotate(IGenerationMod):
         pass
 
 
-    def OnPreTrain(self, iteration: int ):
+    def OnExecute(self, iteration: int ):
         with torch.inference_mode():
             curQuantImg = self.GenJob.GetCurrentImageSynthed()
 
@@ -269,7 +269,7 @@ class ChangePromptMod(IGenerationMod):
         pass
 
 
-    def OnPreTrain(self, iteration: int ):
+    def OnExecute(self, iteration: int ):
         if self.clearOtherPrompts == True:
             self.GenJob.embededPrompts = []
 
@@ -277,43 +277,101 @@ class ChangePromptMod(IGenerationMod):
         self.GenJob.EmbedTextPrompt(self.prompt)    
 
 
-
-class AddPromptMask(IGenerationMod):
-    def __init__(self, GenJob, prompt:str, maskImageFileName:str, dilateMaskAmount:int = 10, clearOtherPrompts:bool = False, cacheImageOnInit:bool = True):
+class RemovePromptMod(IGenerationMod):
+    def __init__(self, GenJob, removeAll:bool = False, removeFirst:bool = False, removeLast:bool = False, removeAtIndex:int = -1):
         super().__init__(GenJob)
 
-        self.prompt = prompt
-        self.maskImageFileName = maskImageFileName
-        self.clearOtherPrompts = clearOtherPrompts
-        self.cacheImageOnInit = cacheImageOnInit
-        self.imageTensor:torch.Tensor = None
+        self.removeFirst = removeFirst
+        self.removeAll = removeAll
+        self.removeLast = removeLast
+        self.removeAtIndex = removeAtIndex
+
+    def Initialize(self):
+        pass
+
+
+    def OnExecute(self, iteration: int ):
+        if self.removeAll:
+            self.GenJob.embededPrompts = []
+            print('Removing all prompts, from ' + str(self))
+        elif self.removeFirst:
+            self.GenJob.embededPrompts.pop(0)
+            print('Removing first prompt, from ' + str(self))
+        elif self.removeLast:
+            self.GenJob.embededPrompts.pop(len(self.GenJob.embededPrompts) - 1)
+            print('Removing last prompt, from ' + str(self))
+        elif self.removeAtIndex >= 0 and self.removeAtIndex < len(self.GenJob.embededPrompts):
+            self.GenJob.embededPrompts.pop( self.removeAtIndex )
+            print('Removing prompt at ' + str(self.removeAtIndex) + ', from ' + str(self))
+          
+
+
+class AddPromptMask(IGenerationMod):
+    def __init__(self, GenJob, prompt:str, maskImageFileName:str = None, maskTensor:torch.Tensor = None, dilateMaskAmount:int = 10, blindfold:float = 0.1, cacheImageOnInit:bool = True):
+        super().__init__(GenJob)
+
+        self.prompt = prompt        
+        self.cacheImageOnInit = cacheImageOnInit        
         self.dilateMaskAmount = dilateMaskAmount
+        self.blindfold = blindfold
+
+        self.maskImageFileName = maskImageFileName # filename of mask, if we load off the HD
+        self.sourceMaskTensor = maskTensor # if we have a tensor we would liek to use as a mask, pass that in
+
+        self.imageTensor:torch.Tensor = None # the mask tensor we use for the prompt
 
     def Initialize(self):
         with torch.inference_mode():
             # load image into tensor? or we can do it when its time to add the mod, memory now vs. performance later...
             if self.cacheImageOnInit:
                 #cache the image as a tensor here
-                self.imageTensor = ImageUtils.loadImageToTensor(self.maskImageFileName, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
+                if self.sourceMaskTensor == None:
+                    self.sourceMaskTensor = ImageUtils.loadImageToTensor(self.maskImageFileName) #, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
 
-                #dialate
-                if self.dilateMaskAmount:
-                    struct_ele = torch.FloatTensor(1,1,self.dilateMaskAmount,self.dilateMaskAmount).fill_(1).to(self.GenJob.vqganDevice)
-                    self.imageTensor = F.conv2d(self.imageTensor,struct_ele,padding='same')
+                self.imageTensor = self.SetupMask(self.sourceMaskTensor)
+                del self.sourceMaskTensor
 
-                #resize masks to output size
-                self.imageTensor = F.interpolate(self.imageTensor,(self.GenJob.toksY * 16, self.GenJob.toksX * 16))
 
-                #make binary
-                self.imageTensor[self.imageTensor>0.1]=1
+    def SetupMask(self, tensor:torch.Tensor) -> torch.Tensor:
+        with torch.inference_mode():
+            #dialate
+            tensor = tensor.unsqueeze(0).to(self.GenJob.vqganDevice)
 
-    def OnPreTrain(self, iteration: int ):
+            if self.dilateMaskAmount:                
+                struct_ele = torch.FloatTensor(1, 1,self.dilateMaskAmount,self.dilateMaskAmount).fill_(1).to(self.GenJob.vqganDevice)
+                tensor = F.conv2d(tensor,struct_ele,padding='same')                
+
+            #resize masks to output size
+            tensor = F.interpolate(tensor,(self.GenJob.ImageSizeX, self.GenJob.ImageSizeY ) )
+
+            tensor = tensor.squeeze(0)
+
+            #make binary
+            tensor[tensor>0.1]=1
+
+            return tensor.to(self.GenJob.vqganDevice)
+
+    def OnExecute(self, iteration: int ):
         if self.imageTensor == None:
-            self.imageTensor = ImageUtils.loadImageToTensor(self.maskImageFileName, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
+            if self.sourceMaskTensor == None:
+                self.sourceMaskTensor = ImageUtils.loadImageToTensor(self.maskImageFileName) #, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
+
+            self.imageTensor = self.SetupMask(self.sourceMaskTensor)
+            del self.sourceMaskTensor
         
         print('Adding masked prompt for: "' + self.prompt + '", from ' + str(self))
 
+        if self.blindfold != 0.0 and self.GenJob.blur_conv == None:
+            #Set up blur used in blindfolding
+            k=13
+            blur_conv = torch.nn.Conv2d(3,3,k,1,'same',bias=False,padding_mode='reflect',groups=3)
+            for param in blur_conv.parameters():
+                param.requires_grad = False
+            blur_conv.weight[:] = 1/(k**2)
+
+            self.GenJob.blur_conv = blur_conv.to(self.GenJob.vqganDevice)
+
         # add to prompts list, embed, add to masks, make its index discoverable, ugh.
-        self.GenJob.EmbedTextPrompt(self.prompt, self.imageTensor)   
+        self.GenJob.EmbedMaskedPrompt(self.prompt, self.imageTensor, self.blindfold)   
 
 

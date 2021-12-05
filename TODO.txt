@@ -6,10 +6,11 @@ Various things that need to be done, yes I'm too lazy to use a ticket tracking s
 
 NOTES:
 - torch transforms are faster, but dont seem to work out as well as the kornia augmentations
+- look at ascend, and see if we really want a sum of errors when using multiple prompts...  ( changed to sum of squares )
 
 
 TODOs:
-- look at ascend, and see if we really want a sum of errors when using multiple prompts... 
+- make masked prompt thing work, clean up the masked prompt stuff in GenerateJob
 
 - look at nvidias torch-tensorRT for speed gains
 

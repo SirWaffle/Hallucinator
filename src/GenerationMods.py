@@ -76,7 +76,8 @@ class GenerationModContainer:
 
 
 
-
+# adds a mask taht can be repeatedly pasted on the image
+# from the initial source image
 class OriginalImageMask(IGenerationMod):
 
     def __init__(self, GenJob, maskPath: str = ''):
@@ -88,20 +89,21 @@ class OriginalImageMask(IGenerationMod):
         self.image_mask_tensor_invert:torch.Tensor = None 
 
     def Initialize(self):
-        original_pil = self.GenJob.GerCurrentImageAsPIL()
-        self.original_image_tensor = TF.to_tensor(original_pil).to(self.GenJob.vqganDevice)
+        with torch.inference_mode():
+            original_pil = self.GenJob.GerCurrentImageAsPIL()
+            self.original_image_tensor = TF.to_tensor(original_pil).to(self.GenJob.vqganDevice)
 
-        img = Image.open(self.maskPath)
-        pil_image = img.convert('RGB')
+            img = Image.open(self.maskPath)
+            pil_image = img.convert('RGB')
         
-        image_mask_np  = np.asarray(pil_image)
+            image_mask_np  = np.asarray(pil_image)
 
-        #makes float32 mask
-        self.image_mask_tensor = TF.to_tensor(image_mask_np).to(self.GenJob.vqganDevice)
+            #makes float32 mask
+            self.image_mask_tensor = TF.to_tensor(image_mask_np).to(self.GenJob.vqganDevice)
 
-        #make boolean masks
-        self.image_mask_tensor_invert = torch.logical_not( self.image_mask_tensor )
-        self.image_mask_tensor = torch.logical_not( self.image_mask_tensor_invert )
+            #make boolean masks
+            self.image_mask_tensor_invert = torch.logical_not( self.image_mask_tensor )
+            self.image_mask_tensor = torch.logical_not( self.image_mask_tensor_invert )
 
 
     def OnPreTrain(self, iteration: int ):
@@ -172,6 +174,9 @@ class ImageZoomer(IGenerationMod):
         
         self.GenJob.quantizedImage.requires_grad_(True)
         self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)
+
+
+
 
 
 # faster tensor based image zoomer, but only zooms in for now
@@ -285,11 +290,22 @@ class AddPromptMask(IGenerationMod):
         self.dilateMaskAmount = dilateMaskAmount
 
     def Initialize(self):
-        # load image into tensor? or we can do it when its time to add the mod, memory now vs. performance later...
-        if self.cacheImageOnInit:
-            #cache the image as a tensor here
-            self.imageTensor = ImageUtils.loadImageToTensor(self.maskImageFileName, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
+        with torch.inference_mode():
+            # load image into tensor? or we can do it when its time to add the mod, memory now vs. performance later...
+            if self.cacheImageOnInit:
+                #cache the image as a tensor here
+                self.imageTensor = ImageUtils.loadImageToTensor(self.maskImageFileName, self.GenJob.ImageSizeX, self.GenJob.ImageSizeY )
 
+                #dialate
+                if self.dilateMaskAmount:
+                    struct_ele = torch.FloatTensor(1,1,self.dilateMaskAmount,self.dilateMaskAmount).fill_(1).to(self.GenJob.vqganDevice)
+                    self.imageTensor = F.conv2d(self.imageTensor,struct_ele,padding='same')
+
+                #resize masks to output size
+                self.imageTensor = F.interpolate(self.imageTensor,(self.GenJob.toksY * 16, self.GenJob.toksX * 16))
+
+                #make binary
+                self.imageTensor[self.imageTensor>0.1]=1
 
     def OnPreTrain(self, iteration: int ):
         if self.imageTensor == None:
@@ -298,6 +314,6 @@ class AddPromptMask(IGenerationMod):
         print('Adding masked prompt for: "' + self.prompt + '", from ' + str(self))
 
         # add to prompts list, embed, add to masks, make its index discoverable, ugh.
-        assert(False) # not implemented yet
-        pass
+        self.GenJob.EmbedTextPrompt(self.prompt, self.imageTensor)   
+
 

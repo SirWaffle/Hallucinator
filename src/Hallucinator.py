@@ -378,7 +378,7 @@ class Hallucinator:
                 genJob.phraseCounter += 1
         
         #image manipulations before training is called, such as the zoom effect
-        self.OnPreTrain(genJob, genJob.currentIteration)
+        genJob.OnPreTrain()
 
         # Training time
         img, lossAll, lossSum = self.train(genJob, genJob.currentIteration)
@@ -390,7 +390,7 @@ class Hallucinator:
    
         # Ready to stop yet?
         if genJob.currentIteration == genJob.totalIterations:
-            self.OnFinishGeneration(genJob, genJob.currentIteration)    
+            genJob.OnFinishGeneration()    
             return False           
 
         genJob.currentIteration += 1
@@ -501,20 +501,3 @@ class Hallucinator:
 
             return synthedImage, lossAll, lossSum
 
-
-
-    #########################
-    ### do manipulations to the image sent to vqgan prior to training steps
-    ### for example, image mask lock, or the image zooming effect
-    #########################
-    def OnPreTrain(self, genJob:GenerateJob.GenerationJob, iteration:int):
-        for modContainer in genJob.ImageModifiers:
-            if modContainer.ShouldApply( GenerationMods.GenerationModStage.PreTrain, iteration ):
-                modContainer.OnPreTrain( iteration )
-
-    def OnFinishGeneration(self, genJob:GenerateJob.GenerationJob, iteration:int):
-        for modContainer in genJob.ImageModifiers:
-            if modContainer.ShouldApply( GenerationMods.GenerationModStage.FinishedGeneration, iteration ):
-                modContainer.OnPreTrain( iteration )
-
-    

@@ -1,3 +1,4 @@
+from typing import List
 from src import ImageUtils
 
 import torch
@@ -125,7 +126,7 @@ def setupAugmentList(augmentNameList, cut_size_x, cut_size_y, use_kornia = True)
 ###################
 ##  string based switch statement 'factory'
 ###################
-def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int, cutSize, cutPow:float, augmentNameList:list, use_kornia:bool = True ):
+def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int, cutSize:List[int], cutPow:float, augmentNameList:list, use_kornia:bool = True ):
     # Cutout class options:
     # 'squish', 'latest','original','updated' or 'updatedpooling'
     if cutMethod == 'latest':
@@ -147,7 +148,7 @@ def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int,
 
     # used for whatever test cut thing im doing
     make_cutouts:nn.Module = None
-    
+
     if cutMethod == 'test':
         make_cutouts = MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)
 

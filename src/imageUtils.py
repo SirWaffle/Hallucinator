@@ -86,7 +86,7 @@ def ramp(ratio, width):
 # Used in older MakeCutouts
 # resample is non-deterministic due to interpolate bicubic
 # F.pad is non determinsitic...
-def resample(input: torch.Tensor, sizeYX, align_corners=True, deterministic = False):
+def resample(input: torch.Tensor, sizeYX, align_corners=True, deterministic = False) -> torch.Tensor:
     n, c, h, w = input.shape
     dh, dw = sizeYX
 

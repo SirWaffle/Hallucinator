@@ -12,7 +12,7 @@ CmdLineArgs.init()
 
 from src import Hallucinator
 from src import HallucinatorHelpers
-from src import GenerationMods
+from src import GenerationCommands
 from src import GenerateJob
 from src import ProfilerHelper
 
@@ -33,17 +33,9 @@ def Run():
 
     # create the hallucinator class from commandline args
     hallucinatorInst = HallucinatorHelpers.CreateHallucinatorFromArgParse( CmdLineArgs.args )
-    hallucinatorInst.Initialize()
-
 
     # create a job from the same argparse args
     genJob = HallucinatorHelpers.CreateGenerationJobFromArgParse( hallucinatorInst, CmdLineArgs.args )
-    genJob.Initialize()
-
-    # write out the input noise...
-    info = PngImagePlugin.PngInfo()
-    info.add_text('comment', f'hallucinator prompt: {CmdLineArgs.args.prompts}')
-    genJob.SaveCurrentImage( str(0).zfill(5) + '_seed_', info)
 
     # flush, clean, go
     sys.stdout.flush()
@@ -51,9 +43,6 @@ def Run():
 
     try:
         Hallucinate( hallucinatorInst, genJob)
-
-        # Save final image
-        genJob.SaveCurrentImage()
 
     except KeyboardInterrupt:
         pass

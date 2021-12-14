@@ -3,14 +3,16 @@ from typing import List
 from PIL import Image
 import numpy as np
 import torch
-from src import GenerationMods, Hallucinator
+from src import GenerationCommand, GenerationCommands, Hallucinator
 from src import GenerateJob
 from torchvision.transforms import functional as TF
 
 ###########################################
 #
 # Some helper methods for creating isntances of hallucinator from command line args
-# and some other default behaviors so we can quickyl make scripts
+# and some other default behaviors so we can quickyl make scripts...
+# This mainly exists to preserve previous functionality of calling it from the command line,
+#   so that i can keep calling this from my discordbot
 #
 ###########################################
 
@@ -23,25 +25,84 @@ def CreateHallucinatorFromArgParse( args ) -> Hallucinator.Hallucinator:
                                               clip_cpu=args.clip_cpu, cuda_device=args.cuda_device, anomaly_checker = args.anomaly_checker,
                                               deterministic = args.deterministic, log_clip = args.log_clip, log_clip_oneshot = args.log_clip_oneshot, 
                                               log_mem = args.log_mem, display_freq = args.display_freq )
+
+    hallucinatorInst.Initialize()
+
     return hallucinatorInst
 
 
 
 
 def CreateGenerationJobFromArgParse( hallucinatorInst:Hallucinator.Hallucinator, args ) -> GenerateJob.GenerationJob:    
-    genJob = GenerateJob.GenerationJob( hallucinatorInst, cut_method = args.cut_method, totalIterations = args.max_iterations, prompts = args.prompts,
-                                        image_prompts = args.image_prompts, startingImage = args.init_image, imageSizeXY = args.size, 
-                                        cutNum=args.cutn, cutSize=args.cut_size, cutPow=args.cut_pow, augments=args.augments,
-                                        optimizerName=args.optimizer,init_weight=args.init_weight, init_noise=args.init_noise,
-                                        noise_prompt_seeds=args.noise_prompt_seeds, noise_prompt_weights=args.noise_prompt_weights, prompt_frequency=args.prompt_frequency,
+    genJob = GenerateJob.GenerationJob( hallucinatorInst, totalIterations = args.max_iterations,
+                                        image_prompts = args.image_prompts, startingImage = args.init_image, imageSizeXY = args.size,                                         
+                                        init_weight=args.init_weight, init_noise=args.init_noise,
+                                        noise_prompt_seeds=args.noise_prompt_seeds, noise_prompt_weights=args.noise_prompt_weights,
                                         deterministic = args.deterministic, outputDir = args.output_dir, outputFilename = args.output, save_freq = args.save_freq,
                                         save_seq = args.save_seq, save_best = args.save_best)
+
+
+    genJob.Initialize()
+
+    # create the commands we need to set this up
+
+    # cut method, fire at 0 so we define it on startup
+    cut = GenerationCommands.SetCutMethod(genJob, cut_method = args.cut_method, cutNum=args.cutn, cutSize=args.cut_size, cutPow=args.cut_pow, augments=args.augments)
+    genJob.AddGenerationCommandFireOnce(cut, 0)
+
+    # optimizer
+    opt = GenerationCommands.SetOptimiser(genJob, optimizerName=args.optimizer, learningRate=args.step_size)
+    genJob.AddGenerationCommandFireOnce(opt, 0)
+
+    # prompts...
+    CreateGenerationCommandListForTextPromptsAndAddToJob(genJob, textPrompts = args.prompts, storyModePromptChangeFreq=args.prompt_frequency)
+
+
     return genJob
 
 
 
-# TODO: figure out blindfolding stuff
-def ConvertIntoMaskablePrompts(genJob:GenerateJob.GenerationJob, spatialPromptConfig:GenerateJob.SpatialPromptConfig) -> List[GenerationMods.AddPromptMask]:
+# TODO: doesnt support image prompts
+def CreateGenerationCommandListForTextPromptsAndAddToJob(genJob:GenerateJob.GenerationJob, textPrompts:str, storyModePromptChangeFreq:int = 0) -> List[GenerationCommands.AddTextPrompt]:
+    # Split text prompts using the pipe character (weights are split later)
+    cmdList:List[GenerationCommands.AddTextPrompt] = []    
+    if textPrompts:
+        all_phrases = []
+
+        # For stories, there will be many phrases
+        story_phrases = [phrase.strip() for phrase in textPrompts.split("^")]
+        
+        # Make a list of all phrases
+        for phrase in story_phrases:
+            all_phrases.append(phrase.split("|"))            
+
+        #build the list of generationCommands for the prompts
+        iterationForCommand:int = 0
+        for phraseList in all_phrases:
+            clearOtherPrompts:bool = True # we want to clear any prompts when we start the next section of prompts
+            for prompt in phraseList:
+                cmd = GenerationCommands.AddTextPrompt(genJob, prompt, clearOtherPrompts=clearOtherPrompts)
+                if clearOtherPrompts == True:
+                    clearOtherPrompts = False
+
+                cmdList.append( cmd )
+                genJob.AddGenerationCommandFireOnce(cmd, iterationForCommand)
+            # next entry in story mode adds the list of prompts at a later time
+            iterationForCommand += storyModePromptChangeFreq
+
+    else:
+        print("no text prompts provided, using default prompt")
+        cmd = GenerationCommands.AddTextPrompt(genJob, "a waffle and a squishbrain")
+        cmdList.append( cmd )
+        genJob.AddGenerationCommandFireOnce(cmd, 0)
+
+    return cmdList
+
+
+# TODO: this is probably nto the best place for this, but w/e, good enough for now.
+#   doesnt support multiple weighted promtps yet, not automatically. need to come up with a way to rpeserve memory, the masks will eat
+#   up memory if we have 10 prompts using the same mask, so neeed to come up with a better way to share masks between prompts
+def CreateGenerationCommandListForMaskablePrompts(genJob:GenerateJob.GenerationJob, spatialPromptConfig:GenerateJob.SpatialPromptConfig) -> List[GenerationCommands.AddTextPromptWithMask]:
     #Make prompt masks
     img = Image.open(spatialPromptConfig.prompt_key_image)
     pil_image = img.convert('RGB')
@@ -98,18 +159,18 @@ def ConvertIntoMaskablePrompts(genJob:GenerateJob.GenerationJob, spatialPromptCo
     #prompt_masks = prompt_masks.to(self.vqganDevice)
 
     #todo, create prompt mod things here
-    modList:List[GenerationMods.AddPromptMask] = []
+    modList:List[GenerationCommands.AddTextPromptWithMask] = []
     maskIdx: int = 0
     for prompt in all_prompts:
         mask = prompt_masks[maskIdx]
         blindfold = blindfolds[maskIdx]
-        promptMod = GenerationMods.AddPromptMask(genJob, prompt, maskTensor=mask, dilateMaskAmount=spatialPromptConfig.dilate_masks, blindfold=blindfold)
+        promptMod = GenerationCommands.AddTextPromptWithMask(genJob, prompt, maskTensor=mask, dilateMaskAmount=spatialPromptConfig.dilate_masks, blindfold=blindfold)
         modList.append( promptMod)
 
         maskIdx += 1
 
     #rough display
-    if prompt_masks.size(0)>=4:
+    '''if prompt_masks.size(0)>=4:
         print('first 3 masks')
         TF.to_pil_image(prompt_masks[0,0].detach().cpu()).save('ex-masks-0.png')   
         TF.to_pil_image(prompt_masks[1,0].detach().cpu()).save('ex-masks-1.png')
@@ -120,22 +181,7 @@ def ConvertIntoMaskablePrompts(genJob:GenerateJob.GenerationJob, spatialPromptCo
         if prompt_masks.size(0)>=6:
             print('next 3 masks')
             TF.to_pil_image(prompt_masks[3:6,0].detach().cpu()).save('ex-masks.png') 
-            #display.display(display.Image('ex-masks.png')) 
+            #display.display(display.Image('ex-masks.png'))''' 
     
 
     return modList
-
-    '''
-    if any(self.blindfold):
-        #Set up blur used in blindfolding
-        k=13
-        self.blur_conv = torch.nn.Conv2d(3,3,k,1,'same',bias=False,padding_mode='reflect',groups=3)
-        for param in self.blur_conv.parameters():
-            param.requires_grad = False
-        self.blur_conv.weight[:] = 1/(k**2)
-
-        self.blur_conv = self.blur_conv.to(self.vqganDevice)
-    else:
-        self.blur_conv = None
-
-    self.all_phrases = all_prompts'''

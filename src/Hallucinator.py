@@ -5,7 +5,8 @@ from typing import Any, Tuple
 import numpy as np
 from tqdm import tqdm
 
-from src import GenerationMods
+from src import GenerationCommands
+from src import GenerationCommand
 from src import MakeCutouts
 from src import GenerateJob
 
@@ -359,24 +360,10 @@ class Hallucinator:
 
 
     # step a job, returns true if theres more processing left for it
-    def ProcessJobStep(self, genJob:GenerateJob.GenerationJob, trainCallbackFunc = None) -> bool:
-        # Change text prompt
-        if genJob.prompt_frequency > 0:
-            if genJob.currentIteration % genJob.prompt_frequency == 0 and genJob.currentIteration > 0:
-                # In case there aren't enough phrases, just loop
-                if genJob.phraseCounter >= len(genJob.all_phrases):
-                    genJob.phraseCounter = 0
-                
-                genJob.current_prompts = genJob.all_phrases[genJob.phraseCounter]
-
-                # Show user we're changing prompt                                
-                print(genJob.current_prompts)
-                
-                for prompt in genJob.current_prompts:
-                    genJob.EmbedTextPrompt(prompt)
-
-                genJob.phraseCounter += 1
-        
+    def ProcessJobStep(self, genJob:GenerateJob.GenerationJob, trainCallbackFunc = None) -> bool:       
+        if genJob.currentIteration == 0:
+            genJob.OnFirstIteration()
+            
         #image manipulations before training is called, such as the zoom effect
         genJob.OnPreTrain()
 
@@ -400,7 +387,7 @@ class Hallucinator:
     @torch.inference_mode()
     def DefaultTrainCallback(self, genJob:GenerateJob.GenerationJob, iteration:int, curImg, lossAll, lossSum):
         # stat updates and progress images
-        if iteration % self.display_freq == 0 and iteration != 0:
+        if iteration % self.display_freq == 0:
             print("\n*************************************************")
             print(f'i: {iteration}, loss sum: {lossSum.item():g}')
             print("*************************************************")

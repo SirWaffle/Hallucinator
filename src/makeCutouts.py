@@ -152,12 +152,9 @@ def GetMakeCutouts( cutMethod:str, clipPerceptorInputResolution:int, cutNum:int,
     if cutMethod == 'test':
         make_cutouts = MakeCutoutsOneSpot(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)
 
-    elif cutMethod == 'maskTest':
-        augs = [] #cant use these here yet
-        make_cutouts = MakeCutoutsMaskTest(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=False, augments=augs)
-
     elif cutMethod == 'growFromCenter':
-        make_cutouts = MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)        
+        make_cutouts = MakeCutoutsGrowFromCenter(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)    
+
     elif cutMethod == 'squish':        
         make_cutouts = MakeCutoutsSquish(clipPerceptorInputResolution, cutSize[0], cutSize[1], cutNum, cut_pow=cutPow, use_pool=True, augments=augs)
     elif cutMethod == 'original':
@@ -209,6 +206,7 @@ class MakeCutoutsSquish(nn.Module):
         min_size_y = min(sideX, self.cut_size_y)
 
         cutouts = []
+        cutout_coords = []
         
         for _ in range(self.cutn):            
             # Use Pooling and original method together
@@ -220,6 +218,7 @@ class MakeCutoutsSquish(nn.Module):
             offsety = torch.randint(0, sideY - size_y + 1, ())
 
             cutout = input[:, :, offsety:offsety + size_y, offsetx:offsetx + size_x]
+            cutout_coords.append([offsetx,offsetx + size_x,offsety,offsety + size_y])
 
             # now pool for some reason? dont know what i'm doing but the results are good...
             if self.use_pool:
@@ -234,7 +233,7 @@ class MakeCutoutsSquish(nn.Module):
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
 
-        return batch, [] #TODO, make this return cordinates for masking a well
+        return batch, cutout_coords
 
 
 #latest make cutouts this came with - works well on images <= 600x600 ish
@@ -259,8 +258,10 @@ class MakeCutoutsNerdy(nn.Module):
     @autocast(enabled=use_mixed_precision)
     def forward(self, input):
         cutouts = []
+        #cutout_coords = [] # TODO: figure out how to make cutout cordinates for this... im not sure we can
         
-        for _ in range(self.cutn):            
+        #TODO: i'm pretty sure the self.cutn doesnt do anything but generate 32 copies of the same tensor here
+        for _ in range(self.cutn):
             # Use Pooling
             cutout = (self.av_pool(input) + self.max_pool(input))/2
             cutouts.append(cutout)
@@ -271,7 +272,7 @@ class MakeCutoutsNerdy(nn.Module):
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
 
-        return batch, [] #TODO, make this return cordinates for masking a well
+        return batch, None
 
 # An Nerdy updated version with selectable Kornia augments, but no pooling:
 # nerdyNoPool
@@ -317,18 +318,20 @@ class MakeCutoutsNerdyNoPool(nn.Module):
         max_size = min(sideX, sideY)
         min_size = min(sideX, sideY, self.cut_size)
         cutouts = []
+        cutout_coords = []
         for _ in range(self.cutn):
             size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
             offsetx = torch.randint(0, sideX - size + 1, ())
             offsety = torch.randint(0, sideY - size + 1, ())
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
+            cutout_coords.append([offsetx,offsetx + size,offsety,offsety + size])
             cutouts.append(ImageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
         batch = self.augs(torch.cat(cutouts, dim=0))
         if self.noise_fac:
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
 
-        return batch, [] #TODO, make this return cordinates for masking a well
+        return batch, cutout_coords
 
 
 # This is the original version (No pooling)
@@ -346,14 +349,16 @@ class MakeCutoutsOrig(nn.Module):
         max_size = min(sideX, sideY)
         min_size = min(sideX, sideY, self.cut_size)
         cutouts = []
+        cutout_coords = []
         for _ in range(self.cutn):
             size = int(torch.rand([])**self.cut_pow * (max_size - min_size) + min_size)
             offsetx = torch.randint(0, sideX - size + 1, ())
             offsety = torch.randint(0, sideY - size + 1, ())
             cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
+            cutout_coords.append([offsetx,offsetx + size,offsety,offsety + size])
             cutouts.append(ImageUtils.resample(cutout, (self.cut_size, self.cut_size), deterministic=deterministic))
 
-        return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1), [] #TODO, make this return cordinates for masking a well
+        return clamp_with_grad(torch.cat(cutouts, dim=0), 0, 1), cutout_coords
 
 
 
@@ -402,6 +407,7 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
         step_y = midY / self.cutn
 
         cutouts = []
+        cutout_coords = []
         
         for i in range(self.cutn):            
             # create the cut
@@ -415,6 +421,7 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
             ypos = int(midY - ( step_y * steps ))
 
             cutout = input[:, :, xpos:xpos + size_y, ypos:ypos + size_x]
+            cutout_coords.append([xpos,xpos + size_x,xpos,xpos + size_y])
 
             if self.use_pool:
                 cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
@@ -428,7 +435,7 @@ class MakeCutoutsGrowFromCenter(MakeCutoutsSquish):
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
 
-        return batch, [] #TODO, make this return cordinates for masking a well
+        return batch, cutout_coords
 
 
 
@@ -453,6 +460,7 @@ class MakeCutoutsOneSpot(MakeCutoutsSquish):
         midY = max_size_y / 2
 
         cutouts = []
+        cutout_coords = []
 
         size_x = self.clipRes
         size_y = self.clipRes
@@ -466,6 +474,7 @@ class MakeCutoutsOneSpot(MakeCutoutsSquish):
         #looks cool with styles
         #cutout = input[:, :, 0:xpos + size_y, ypos:ypos + size_x]
         cutout = input[:, :, 0:size_y, 0:size_x]
+        cutout_coords.append([0,size_x,0,size_y])
 
         # now pool for some reason? dont know what i'm doing but the results are good...
         if self.use_pool:
@@ -482,74 +491,4 @@ class MakeCutoutsOneSpot(MakeCutoutsSquish):
             facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
             batch = batch + facs * torch.randn_like(batch)
 
-        return batch, [] #TODO, make this return cordinates for masking a well
-
-
-
-
-
-
-
-
-class MakeCutoutsMaskTest(nn.Module):
-    def __init__(self, clipRes, cut_size_x, cut_size_y, cutn, cut_pow=1., use_pool=True, augments=[]):
-        super().__init__()
-        self.cut_size_x = cut_size_x
-        self.cut_size_y = cut_size_y
-        self.cutn = cutn
-        self.cut_pow = cut_pow # not used with pooling
-        self.use_pool = use_pool
-        self.clipRes = clipRes
-        
-        #self.augs = setupAugmentList(cut_size_x, cut_size_y)
-        self.augs = setupAugmentList(augments, self.clipRes, self.clipRes)
-
-        self.noise_fac = 0.1
-        # self.noise_fac = False
-
-        # Pooling
-        self.av_pool = nn.AdaptiveAvgPool2d((self.clipRes, self.clipRes))
-        self.max_pool = nn.AdaptiveMaxPool2d((self.clipRes, self.clipRes))
-
-    @autocast(enabled=use_mixed_precision)
-    def forward(self, input):
-        sideY, sideX = input.shape[2:4]
-
-        max_size_x = sideX
-        max_size_y = sideY
-
-        min_size_x = min(sideX, self.cut_size_x)
-        min_size_y = min(sideX, self.cut_size_y)
-
-        cutouts = []
-        cutout_coords = []
-        
-        for _ in range(self.cutn):            
-            # Use Pooling and original method together
-
-            size_x = int(torch.rand([])**self.cut_pow * (max_size_x - min_size_x) + min_size_x)
-            size_y = int(torch.rand([])**self.cut_pow * (max_size_y - min_size_y) + min_size_y)
-
-            offsetx = torch.randint(0, sideX - size_x + 1, ())
-            offsety = torch.randint(0, sideY - size_y + 1, ())
-
-            cutout = input[:, :, offsety:offsety + size_y, offsetx:offsetx + size_x]
-            cutout_coords.append([offsetx,offsetx + size_x,offsety,offsety + size_y])
-
-            # now pool for some reason? dont know what i'm doing but the results are good...
-            if self.use_pool:
-                cutout = (self.av_pool(cutout) + self.max_pool(cutout))/2
-                cutouts.append(cutout)
-            else:
-                cutouts.append(ImageUtils.resample(cutout, (self.clipRes, self.clipRes), deterministic=deterministic))            
-            
-        batch = self.augs(torch.cat(cutouts, dim=0))
-        
-        if self.noise_fac:
-            facs = batch.new_empty([self.cutn, 1, 1, 1]).uniform_(0, self.noise_fac)
-            batch = batch + facs * torch.randn_like(batch)
-
-        ## lets attempt to apply masked shit here i guess?
-
-
-        return batch, cutout_coords      
+        return batch, cutout_coords

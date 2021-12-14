@@ -1,10 +1,12 @@
 # classes for adding modifications to images during training
 # such as the zoom in stuff
 # or masking parts of original image onto currently generated image
+# TODO: these are all directly modifying their generation job, i dont like that, but it'll have to be refactored later
 
-import abc
-from enum import Enum, auto
+from typing import List
+from src import GenerationCommand
 from src import ImageUtils
+from src import MakeCutouts
 import numpy as np
 
 import torch
@@ -14,71 +16,11 @@ from torchvision.transforms import functional as TF
 from PIL import ImageFile, Image, ImageChops
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
- 
-# TODO: this may be better off not being a sign of 'when' the mod should apply, since most will be during the training loop
-# but what the mod applies to, and therefor what needs updating when the mod does its thing
-# ex: 
-#   ImageMod requires re-encoding and redoing the zer, 
-#   prompt mods need to re-encode with clip, 
-#
-# and in the future, these mods will be turned into more of a 'command' pattern, to modify stuff from art program plugins
-# so there will be things like:
-#    LoadNewImage, ResetOptimizer, ChangeLearningRate, ChangeOptimizer, ChangeCutouts, all of which require different things to be redone / different ways to handle
-class GenerationModStage(Enum):
-    PreTrain = auto() #pretraining step, mods happen before the next training step
-    FinishedGeneration = auto() #happens when the generation of the image is finished
 
 
-class IGenerationMod(metaclass=abc.ABCMeta):
-
-    @classmethod
-    def __subclasshook__(cls, subclass):
-        return (hasattr(subclass, 'OnExecute') and 
-                callable(subclass.OnExecute) or 
-                NotImplemented)
-
-    def __init__(self, GenJob, ModStage:GenerationModStage = GenerationModStage.PreTrain):
-        super().__init__()
-
-        self.GenJob = GenJob  
-        self.ModStage = ModStage      
-
-    @abc.abstractmethod
-    def Initialize(self):
-        raise NotImplementedError
-
-    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        return stage.value == self.ModStage.value
-
-    @abc.abstractmethod
-    def OnExecute(self, iteration: int ):
-        raise NotImplementedError
-
-
-
-class GenerationModContainer:
-    def __init__(self, mod:IGenerationMod, startIt: int = 0, endIt: int = 9999999999, freq: int = 10):
-        self.freq = freq
-        self.startIt = startIt
-        self.endIt = endIt
-        self.mod = mod
-
-    def ShouldApply(self, stage: GenerationModStage, iteration: int ) -> bool:
-        if self.mod.ShouldApply(stage, iteration):
-            if iteration >= self.startIt and iteration <= self.endIt:
-                iterationDelta = iteration - self.startIt
-                if  iterationDelta % self.freq == 0:
-                    return True
-        return False
-
-    def OnExecute(self, iteration: int ):
-        self.mod.OnExecute(iteration)
-
-
-
-# adds a mask taht can be repeatedly pasted on the image
-# from the initial source image
-class OriginalImageMask(IGenerationMod):
+# adds a mask that can be repeatedly pasted on the image
+# from the initial source image. kinda preserves a part of the image, and generates on the rest
+class OriginalImageMask(GenerationCommand.IGenerationCommand):
 
     def __init__(self, GenJob, maskPath: str = ''):
         super().__init__(GenJob)
@@ -122,14 +64,14 @@ class OriginalImageMask(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)
+        self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.step_size)
 
 
 
 
 
 # from original inmplementation of image zoom from nerdyRodent
-class ImageZoomer(IGenerationMod):
+class ImageZoomer(GenerationCommand.IGenerationCommand):
     #fucking python has no maxint to use as a large value, annoying
     def __init__(self, GenJob,zoom_scale: float = 0.99, zoom_shift_x: int = 0, zoom_shift_y: int = 0):
         super().__init__(GenJob)
@@ -173,14 +115,14 @@ class ImageZoomer(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)
+        self.GenJob.optimizer = self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.step_size)
 
 
 
 
 
 # faster tensor based image zoomer, but only zooms in for now
-class ImageZoomInFast(IGenerationMod):
+class ImageZoomInFast(GenerationCommand.IGenerationCommand):
     #fucking python has no maxint to use as a large value, annoying
     def __init__(self, GenJob, zoom_scale: float = 1.02, normalizedZoomPointX: float = 0.5, normalizedZoomPointY: float = 0.5):
         super().__init__(GenJob)
@@ -224,13 +166,13 @@ class ImageZoomInFast(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
 
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)
+        self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.step_size)
 
 
 
 
 
-class ImageRotate(IGenerationMod):
+class ImageRotate(GenerationCommand.IGenerationCommand):
     def __init__(self, GenJob, angle: int = 1):
         super().__init__(GenJob)
 
@@ -254,11 +196,11 @@ class ImageRotate(IGenerationMod):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.optimizer = self.GenJob.hallucinatorInst.get_optimizer(self.GenJob.quantizedImage, self.GenJob.optimizerName, self.GenJob.step_size)                
+        self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.step_size)                
 
 
 
-class ChangePromptMod(IGenerationMod):
+class AddTextPrompt(GenerationCommand.IGenerationCommand):
     def __init__(self, GenJob, prompt:str, clearOtherPrompts:bool = True):
         super().__init__(GenJob)
 
@@ -277,7 +219,7 @@ class ChangePromptMod(IGenerationMod):
         self.GenJob.EmbedTextPrompt(self.prompt)    
 
 
-class RemovePromptMod(IGenerationMod):
+class RemovePrompt(GenerationCommand.IGenerationCommand):
     def __init__(self, GenJob, removeAll:bool = False, removeFirst:bool = False, removeLast:bool = False, removeAtIndex:int = -1):
         super().__init__(GenJob)
 
@@ -306,7 +248,7 @@ class RemovePromptMod(IGenerationMod):
           
 
 
-class AddPromptMask(IGenerationMod):
+class AddTextPromptWithMask(GenerationCommand.IGenerationCommand):
     def __init__(self, GenJob, prompt:str, maskImageFileName:str = None, maskTensor:torch.Tensor = None, dilateMaskAmount:int = 10, blindfold:float = 0.1, cacheImageOnInit:bool = True):
         super().__init__(GenJob)
 
@@ -375,3 +317,38 @@ class AddPromptMask(IGenerationMod):
         self.GenJob.EmbedMaskedPrompt(self.prompt, self.imageTensor, self.blindfold)   
 
 
+# sets the optimiser used
+# see hallucinator.py, def get_optimizer, to see various optimisers and learnign rates
+class SetOptimiser(GenerationCommand.IGenerationCommand):
+    def __init__(self, GenJob, optimizerName:str = "Adam", learningRate:float = 0.1):
+        super().__init__(GenJob)
+
+        self.optimizerName = optimizerName
+        self.learningRate = learningRate
+
+    def Initialize(self):
+        pass
+
+
+    def OnExecute(self, iteration: int ):
+        self.GenJob.SetOptimizer(self.optimizerName, self.learningRate)  
+
+
+# cut method to use, see MakeCutouts.py for various cutout methods
+class SetCutMethod(GenerationCommand.IGenerationCommand):
+    def __init__(self, GenJob, cut_method:str = "latest", cutNum:int = 32, cutSize:List[int] = [0,0], cutPow:float = 1.0, augments:list = [], useKorniaAugments:bool = True):
+        super().__init__(GenJob)
+
+        self.cut_method = cut_method
+        self.cutNum = cutNum
+        self.cutSize = cutSize
+        self.cutPow = cutPow
+        self.augments = augments
+        self.useKorniaAugments = useKorniaAugments
+
+    def Initialize(self):
+        pass
+
+
+    def OnExecute(self, iteration: int ):
+        self.GenJob.SetCutMethod( self.cut_method, self.cutNum, self.cutSize, self.cutPow, self.augments, self.useKorniaAugments )

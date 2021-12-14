@@ -5,14 +5,12 @@
 import sys
 import gc
 
-#sys.path.append('src')
-
 from src import CmdLineArgs
 CmdLineArgs.init()
 
 from src import Hallucinator
 from src import HallucinatorHelpers
-from src import GenerationMods
+from src import GenerationCommands
 from src import GenerateJob
 
 from PIL import ImageFile, PngImagePlugin
@@ -25,12 +23,9 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # create the hallucinator class from commandline args
 hallucinatorInst = HallucinatorHelpers.CreateHallucinatorFromArgParse( CmdLineArgs.args )
-hallucinatorInst.Initialize()
-
 
 # create a job from the same argparse args
 genJob = HallucinatorHelpers.CreateGenerationJobFromArgParse( hallucinatorInst, CmdLineArgs.args )
-genJob.Initialize()
 
 # write out the input noise...
 info = PngImagePlugin.PngInfo()

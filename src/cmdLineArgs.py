@@ -23,7 +23,7 @@ def init():
     vq_parser = argparse.ArgumentParser(description='Image generation using VQGAN+CLIP')
 
     # Add the arguments
-    vq_parser.add_argument("-p",    "--prompts", type=str, help="Text prompts", default=None, dest='prompts')
+    vq_parser.add_argument("-p",    "--prompts", type=str, help="Text prompts", default='A waffle and a squishbrain', dest='prompts')
     vq_parser.add_argument("-ip",   "--image_prompts", type=str, help="Image prompts / target image", default=[], dest='image_prompts')
     vq_parser.add_argument("-i",    "--iterations", type=int, help="Number of iterations", default=500, dest='max_iterations')    
     vq_parser.add_argument("-stats","--stats_every", type=int, help="stats display frequency", default=50, dest='display_freq')

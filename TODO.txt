@@ -10,6 +10,8 @@ NOTES:
 
 
 TODOs:
+- clean up how we modify the genJob from commands.. its hackinsh and terrible
+
 - make masked prompt thing work, clean up the masked prompt stuff in GenerateJob
 
 - look at nvidias torch-tensorRT for speed gains

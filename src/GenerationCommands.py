@@ -318,7 +318,7 @@ class AddTextPromptWithMask(GenerationCommand.IGenerationCommand):
 
 
 # sets the optimiser used
-# see hallucinator.py, def get_optimizer, to see various optimisers and learnign rates
+# see GenerationJob.py, def get_optimizer, to see various optimisers and learnign rates
 class SetOptimiser(GenerationCommand.IGenerationCommand):
     def __init__(self, GenJob, optimizerName:str = "Adam", learningRate:float = 0.1):
         super().__init__(GenJob)

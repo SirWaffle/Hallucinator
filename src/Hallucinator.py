@@ -42,8 +42,6 @@ from torchvision import transforms
 from torchvision.transforms import functional as TF
 from torch.cuda import get_device_properties
 
-import torch_optimizer
-
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -156,39 +154,6 @@ class Hallucinator:
             z_q = self.vector_quantize(z.movedim(1, 3), self.vqganModel.quantize.embedding.weight).movedim(3, 1)
         return MakeCutouts.clamp_with_grad(self.vqganModel.decode(z_q).add(1).div(2), 0, 1)
 
-
-
-    ########################
-    # get the optimizer ###
-    ########################
-    def get_optimizer(self, quantizedImg:torch.Tensor, opt_name:str, opt_lr:float):
-
-        # from nerdy project, potential learning rate tweaks?
-        # Messing with learning rate / optimizers
-        #variable_lr = args.step_size
-        #optimizer_list = [['Adam',0.075],['AdamW',0.125],['Adagrad',0.2],['Adamax',0.125],['DiffGrad',0.075],['RAdam',0.125],['RMSprop',0.02]]
-
-        opt: torch.optim.Optimizer = None
-        if opt_name == "Adam":
-            opt = optim.Adam([quantizedImg], lr=opt_lr)	# LR=0.1 (Default)
-        elif opt_name == "AdamW":
-            opt = optim.AdamW([quantizedImg], lr=opt_lr)	
-        elif opt_name == "Adagrad":
-            opt = optim.Adagrad([quantizedImg], lr=opt_lr)	
-        elif opt_name == "Adamax":
-            opt = optim.Adamax([quantizedImg], lr=opt_lr)	
-        elif opt_name == "DiffGrad":
-            opt = torch_optimizer.DiffGrad([quantizedImg], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
-        elif opt_name == "AdamP":
-            opt = torch_optimizer.AdamP([quantizedImg], lr=opt_lr)		    	    
-        elif opt_name == "RMSprop":
-            opt = optim.RMSprop([quantizedImg], lr=opt_lr)
-        elif opt_name == "MADGRAD":
-            opt = torch_optimizer.MADGRAD([quantizedImg], lr=opt_lr)      
-        else:
-            print("Unknown optimizer. Are choices broken?")
-            opt = optim.Adam([quantizedImg], lr=opt_lr)
-        return opt
 
 
     ##########################
@@ -361,9 +326,6 @@ class Hallucinator:
 
     # step a job, returns true if theres more processing left for it
     def ProcessJobStep(self, genJob:GenerateJob.GenerationJob, trainCallbackFunc = None) -> bool:       
-        if genJob.currentIteration == 0:
-            genJob.OnFirstIteration()
-            
         #image manipulations before training is called, such as the zoom effect
         genJob.OnPreTrain()
 
@@ -375,12 +337,13 @@ class Hallucinator:
         
         self.DefaultTrainCallback(genJob, genJob.currentIteration, img, lossAll, lossSum)
    
+        genJob.currentIteration += 1
+        
         # Ready to stop yet?
         if genJob.currentIteration == genJob.totalIterations:
             genJob.OnFinishGeneration()    
             return False           
-
-        genJob.currentIteration += 1
+        
         return True
 
     

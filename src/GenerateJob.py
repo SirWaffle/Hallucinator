@@ -38,7 +38,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import transforms
 from torchvision.transforms import functional as TF
-
+import torch_optimizer
 
 from PIL import ImageFile, Image, PngImagePlugin, ImageChops
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -232,6 +232,19 @@ class GenerationJob:
             if modContainer.ShouldApply( GenerationCommand.GenerationModStage.PreTrain, self.currentIteration ):
                 modContainer.OnExecute( self.currentIteration )
 
+        # check to ensure we important things set, otherwise default them
+        if self.currentIteration == 0:
+            # creates a default cut method. this is expected to be set by the SetCutMethod command
+            if self.CurrentCutoutMethod == None:            
+                self.SetCutMethod()
+                print("created default cutmethod: " + str(type(self.CurrentCutoutMethod)))
+
+            # create the default optimizer if none specified
+            if self.optimizer == None:
+                self.SetOptimizer()
+                print("created default optimiser: " + str(self.optimizer))
+
+
     def OnFinishGeneration(self):
         for modContainer in self.GenerationCommandList:
             if modContainer.ShouldApply( GenerationCommand.GenerationModStage.FinishedGeneration, self.currentIteration ):
@@ -325,14 +338,49 @@ class GenerationJob:
         self.CurrentCutoutMethod = MakeCutouts.GetMakeCutouts( cutMethod, self.clipPerceptorInputResolution, cutNum, cutSize, cutPow, augmentNameList, use_kornia )
 
 
+    ########################
+    # get the optimizer ###
+    ########################
+
+    def get_optimizer(self, quantizedImg:torch.Tensor, opt_name:str, opt_lr:float):
+
+        # from nerdy project, potential learning rate tweaks?
+        # Messing with learning rate / optimizers
+        #variable_lr = args.step_size
+        #optimizer_list = [['Adam',0.075],['AdamW',0.125],['Adagrad',0.2],['Adamax',0.125],['DiffGrad',0.075],['RAdam',0.125],['RMSprop',0.02]]
+
+        opt: torch.optim.Optimizer = None
+        if opt_name == "Adam":
+            opt = optim.Adam([quantizedImg], lr=opt_lr)	# LR=0.1 (Default)
+        elif opt_name == "AdamW":
+            opt = optim.AdamW([quantizedImg], lr=opt_lr)	
+        elif opt_name == "Adagrad":
+            opt = optim.Adagrad([quantizedImg], lr=opt_lr)	
+        elif opt_name == "Adamax":
+            opt = optim.Adamax([quantizedImg], lr=opt_lr)	
+        elif opt_name == "DiffGrad":
+            opt = torch_optimizer.DiffGrad([quantizedImg], lr=opt_lr, eps=1e-9, weight_decay=1e-9) # NR: Playing for reasons
+        elif opt_name == "AdamP":
+            opt = torch_optimizer.AdamP([quantizedImg], lr=opt_lr)		    	    
+        elif opt_name == "RMSprop":
+            opt = optim.RMSprop([quantizedImg], lr=opt_lr)
+        elif opt_name == "MADGRAD":
+            opt = torch_optimizer.MADGRAD([quantizedImg], lr=opt_lr)      
+        else:
+            print("Unknown optimizer. Are choices broken?")
+            opt = optim.Adam([quantizedImg], lr=opt_lr)
+        return opt
+
+
     def SetOptimizer(self, opt_name:str = "Adam", opt_lr:float = 0.1) -> None:
-        self.optimizer = self.hallucinatorInst.get_optimizer(self.quantizedImage, opt_name, opt_lr)
+        self.optimizer = self.get_optimizer(self.quantizedImage, opt_name, opt_lr)
 
         if self.optimizer == "MADGRAD":
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor=0.999, patience=0)  
 
         # Output for the user
         print('Optimizing using:', self.optimizer)        
+
 
     #############
     ## Life cycle
@@ -369,17 +417,6 @@ class GenerationJob:
         if self.noise_prompt_weights:
             print('Noise prompt weights:', self.noise_prompt_weights)    
 
-
-    def OnFirstIteration(self):
-        # creates a default cut method. this is expected to be set by the SetCutMethod command
-        if self.CurrentCutoutMethod == None:            
-            self.SetCutMethod()
-            print("created default cutmethod: " + str(type(self.CurrentCutoutMethod)))
-
-        # create the default optimizer if none specified
-        if self.optimizer == None:
-            self.SetOptimizer()
-            print("created default optimiser: " + str(self.optimizer))
 
     #####################
     ### Helper type methods

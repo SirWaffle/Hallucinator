@@ -217,6 +217,9 @@ class Hallucinator:
         if self.anomaly_checker:
             torch.autograd.set_detect_anomaly(True)
 
+        print ('Available devices: ', torch.cuda.device_count())
+        print ('Current cuda device: ', torch.cuda.current_device())
+
 
     def InitClip(self):
         if self.log_clip:

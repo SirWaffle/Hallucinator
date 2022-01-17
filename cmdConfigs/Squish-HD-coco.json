@@ -1,0 +1,11 @@
+{
+    "max_iterations": 200,
+    "size": [
+        400,
+        400
+    ],
+    "cut_method": "squish",
+    "cutn": 128,
+    "vqgan_config": "checkpoints/coco.yaml",
+    "vqgan_checkpoint": "checkpoints/coco.ckpt"
+}

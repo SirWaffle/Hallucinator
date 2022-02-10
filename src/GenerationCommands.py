@@ -166,7 +166,7 @@ class ImageZoomInFast(GenerationCommand.IGenerationCommand):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
 
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.step_size)
+        self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.optimizerLearningRate)
 
 
 
@@ -196,7 +196,7 @@ class ImageRotate(GenerationCommand.IGenerationCommand):
         #self.GenJob.original_quantizedImage = self.GenJob.quantizedImage.detach()
         
         self.GenJob.quantizedImage.requires_grad_(True)
-        self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.step_size)                
+        self.GenJob.SetOptimizer(self.GenJob.optimizerName, self.GenJob.optimizerLearningRate)                
 
 
 

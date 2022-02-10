@@ -158,7 +158,9 @@ class GenerationJob:
 
         self.quantizedImage: torch.Tensor = None # source image thats fed into taming transformers
 
-        self.optimizer: torch.optim.Optimizer = None #currently in use optimizer        
+        self.optimizer: torch.optim.Optimizer = None #currently in use optimizer    
+        self.optimizerName = "Adam"
+        self.optimizerLearningRate = 0.1    
 
         # cuts
         self.CurrentCutoutMethod = None
@@ -234,6 +236,7 @@ class GenerationJob:
 
         # check to ensure we important things set, otherwise default them
         if self.currentIteration == 0:
+            print("PRETRAIN FIRST CALL")
             # creates a default cut method. this is expected to be set by the SetCutMethod command
             if self.CurrentCutoutMethod == None:            
                 self.SetCutMethod()
@@ -377,6 +380,9 @@ class GenerationJob:
 
         if self.optimizer == "MADGRAD":
             self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', factor=0.999, patience=0)  
+
+        self.optimizerName = opt_name
+        self.optimizerLearningRate = opt_lr 
 
         # Output for the user
         print('Optimizing using:', self.optimizer)        

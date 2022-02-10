@@ -25,3 +25,4 @@ cifar-100-python/train
 clipModels/ViT-B-32.pt
 /output
 /.mypy_cache
+output-saved/2__output.mp4

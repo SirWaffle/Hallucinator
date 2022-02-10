@@ -9,8 +9,8 @@ SET compressedFramerate=fps=14
 
 
 REM scale
-SET filters=scale=iw:ih
-REM SET filters=scale=iw*0.5:ih*0.5
+REM SET filters=scale=iw:ih
+SET filters=scale=iw*0.5:ih*0.5
 REM SET filters=scale=300:300
 REM SET filters=scale='min(512,iw)':'min(512,ih)'
 
@@ -19,7 +19,7 @@ REM SET filters=%filters%,minterpolate=fps=%INTERPOLATE_TO_FRAMERATE%:mi_mode=bl
 REM SET filters=%filters%,minterpolate=fps=%INTERPOLATE_TO_FRAMERATE%:mi_mode=mci
 
 SET MAKE_GIF=1
-SET MAKE_COMPRESSED_GIF=0
+SET MAKE_COMPRESSED_GIF=1
 SET MAKE_MP4=1
 
 

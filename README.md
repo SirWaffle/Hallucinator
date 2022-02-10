@@ -14,7 +14,7 @@ I have modified the original readme to reflect my repo - the first readme was we
 - minor memory usage reductions
 - minor performance improvements
 - can now generate fully deterministic images, although its slower and can't be used with pooling and other features
-- code refactoring
+- code refactoring, slowly decoupling everything to use a job and command pattern
 - various new commandline options
 - for users with low RAM GPU's desperate to get more resolution, there are options to force clip models to CPU or another GPU, much much slower but saves some VRAM
 - ability to write out / load in json configs for common sets of command line options, which can be overriden via commandline. nice to use for creating various sets of parameters for different generation techniques
@@ -24,12 +24,16 @@ I have modified the original readme to reflect my repo - the first readme was we
 - stats, memory usage logging
 - clip analysis logging which may or may not be correct
 - cut method modifications for higher res images and different generative patterns
+- spatial masking added ( see links at the bottom for link to the original collab )
+- - adjustment to how multiple prompt's errors are combined ( original summed, this now does a sum of squares )
 
 ## roadmap
+- continuining to decouple classes and create commands to allow for eventual interactive image manipulation
 - integration of more models and methods for generation
 - masking to prevent modifications in certain places, masking to provide specific prompts in certain locations
 - integration via plugins to art programs for interactive generation
 - interactive server mode for a dedicated interactive instance on a local machine
+- never ending investigation for performance improvements and memory improvements
 
 
 

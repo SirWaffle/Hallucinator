@@ -380,7 +380,7 @@ class Hallucinator:
             print(" ")
             sys.stdout.flush()  
 
-        if iteration % genJob.save_freq == 0 and iteration != 0:     
+        if genJob.save_freq != 0 and iteration % genJob.save_freq == 0 and iteration != 0:     
             if genJob.save_seq == True:
                 genJob.savedImageCount = genJob.savedImageCount + 1                
             else:
@@ -421,9 +421,15 @@ class Hallucinator:
                 total:torch.Tensor = None
                 for t in lossAll:
                     if total == None:
-                        total = torch.square( t )
+                        if t < 0.0:
+                            total = torch.square( 1.0 + t )
+                        else:
+                            total = torch.square( t )
                     else:
-                        total += torch.square( t )
+                        if t < 0.0:
+                            total += torch.square( 1.0 + t )
+                        else:
+                            total += torch.square( t )
 
                 lossSum = total
             else:

@@ -30,7 +30,7 @@ genJob = HallucinatorHelpers.CreateGenerationJobFromArgParse( hallucinatorInst, 
 # write out the input noise...
 info = PngImagePlugin.PngInfo()
 #info.add_text('comment', f'hallucinator prompt: {CmdLineArgs.args.prompts}')
-genJob.SaveCurrentImage( str(0).zfill(5) + '_seed_', info)
+#genJob.SaveCurrentImage( str(0).zfill(5) + '_seed_', info)
 
 # flush, clean, go
 sys.stdout.flush()
